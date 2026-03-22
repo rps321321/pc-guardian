@@ -7,35 +7,31 @@ namespace PCGuardian;
 
 internal sealed class NetworkForm : Form
 {
-    readonly DataGridView _grid;
-    readonly Label _lblSummary;
+    readonly TabControl _tabs;
+    readonly DataGridView _gridTraffic;
+    readonly DataGridView _gridConns;
+    readonly Label _lblBandwidth;
     readonly Label _lblStatus;
-    readonly System.Windows.Forms.Timer _refreshTimer;
+    readonly BandwidthMonitor _bwMonitor;
+    readonly System.Windows.Forms.Timer _connTimer;
     readonly ConcurrentDictionary<string, string> _dnsCache = new();
 
-    // Row tints by category
+    // Row tints
     static readonly Color TintRemoteAccess = Color.FromArgb(38, 239, 68, 68);
     static readonly Color TintSystem       = Color.FromArgb(18, 113, 113, 122);
     static readonly Color TintUnknown      = Color.FromArgb(22, 245, 158, 11);
 
-    // -----------------------------------------------------------------------
-    //  P/Invoke — GetExtendedTcpTable (same as ScanEngine, duplicated since private)
-    // -----------------------------------------------------------------------
+    // --- P/Invoke for connections tab ---
 
     [DllImport("iphlpapi.dll", SetLastError = true)]
     static extern uint GetExtendedTcpTable(
-        IntPtr pTcpTable, ref int pdwSize, bool bOrder,
-        int ulAf, int tableClass, uint reserved);
+        IntPtr table, ref int size, bool order,
+        int af, int tableClass, uint reserved);
 
     [StructLayout(LayoutKind.Sequential)]
-    struct MIB_TCPROW_OWNER_PID
+    struct TcpRow
     {
-        public uint dwState;
-        public uint dwLocalAddr;
-        public uint dwLocalPort;
-        public uint dwRemoteAddr;
-        public uint dwRemotePort;
-        public uint dwOwningPid;
+        public uint state, localAddr, localPort, remoteAddr, remotePort, pid;
     }
 
     const int AF_INET = 2;
@@ -54,9 +50,9 @@ internal sealed class NetworkForm : Form
 
     public NetworkForm()
     {
-        Text = "Network Monitor \u2014 PC Guardian";
-        Size = new(850, 550);
-        MinimumSize = new(650, 400);
+        Text = "Network Traffic \u2014 PC Guardian";
+        Size = new(900, 600);
+        MinimumSize = new(700, 450);
         StartPosition = FormStartPosition.CenterScreen;
         FormBorderStyle = FormBorderStyle.Sizable;
         BackColor = Theme.BgPrimary;
@@ -64,20 +60,20 @@ internal sealed class NetworkForm : Form
         Icon = SystemIcons.Shield;
         SetStyle(ControlStyles.OptimizedDoubleBuffer, true);
 
-        // --- Summary bar ---
-        _lblSummary = new Label
+        // --- Bandwidth bar (top) ---
+        _lblBandwidth = new Label
         {
             Dock = DockStyle.Top,
-            Height = 38,
+            Height = 44,
             BackColor = Color.FromArgb(15, 15, 18),
-            ForeColor = Theme.TextSecondary,
+            ForeColor = Theme.TextPrimary,
             Font = Theme.CardTitle,
             TextAlign = ContentAlignment.MiddleLeft,
             Padding = new(14, 0, 0, 0),
-            Text = "Loading connections\u2026",
+            Text = "  Measuring bandwidth\u2026",
         };
 
-        // --- Status bar ---
+        // --- Status bar (bottom) ---
         _lblStatus = new Label
         {
             Dock = DockStyle.Bottom,
@@ -89,34 +85,153 @@ internal sealed class NetworkForm : Form
             Padding = new(14, 0, 0, 0),
         };
 
-        // --- Grid ---
-        _grid = CreateGrid();
-        _grid.Columns.AddRange(
+        // --- Tabs ---
+        _tabs = new TabControl
+        {
+            Dock = DockStyle.Fill,
+            Font = Theme.CardTitle,
+        };
+        // Dark style the tab control
+        _tabs.DrawMode = TabDrawMode.OwnerDrawFixed;
+        _tabs.DrawItem += DrawTab;
+        _tabs.Padding = new(12, 4);
+
+        // --- Traffic tab (bandwidth per app) ---
+        _gridTraffic = CreateGrid();
+        _gridTraffic.Columns.AddRange(
+        [
+            Col("Process", 120),
+            Col("Category", 90),
+            Col("\u2193 In", 80),
+            Col("\u2191 Out", 80),
+            Col("Connections", 75),
+            Col("Total In", 80),
+            Col("Total Out", 80),
+        ]);
+        _gridTraffic.CellFormatting += OnCellFormattingTraffic;
+
+        var tabTraffic = new TabPage("  \u26A1 Bandwidth  ") { BackColor = Theme.BgPrimary };
+        tabTraffic.Controls.Add(_gridTraffic);
+        _tabs.TabPages.Add(tabTraffic);
+
+        // --- Connections tab (raw TCP) ---
+        _gridConns = CreateGrid();
+        _gridConns.Columns.AddRange(
         [
             Col("Process", 110), Col("Category", 85), Col("Local Port", 70),
             Col("Remote Address", 110), Col("Remote Port", 65),
             Col("Hostname", 140), Col("Status", 80),
         ]);
-        _grid.CellFormatting += OnCellFormatting;
+        _gridConns.CellFormatting += OnCellFormattingConns;
 
-        // Layout order matters for Dock
-        Controls.Add(_grid);
-        Controls.Add(_lblSummary);
+        var tabConns = new TabPage("  \uD83D\uDD17 Connections  ") { BackColor = Theme.BgPrimary };
+        tabConns.Controls.Add(_gridConns);
+        _tabs.TabPages.Add(tabConns);
+
+        // Layout: status bottom, bandwidth top, tabs fill
+        Controls.Add(_tabs);
+        Controls.Add(_lblBandwidth);
         Controls.Add(_lblStatus);
 
-        // --- Refresh timer ---
-        _refreshTimer = new System.Windows.Forms.Timer { Interval = 3000 };
-        _refreshTimer.Tick += (_, _) =>
+        // --- Bandwidth monitor ---
+        _bwMonitor = new BandwidthMonitor(2000);
+        _bwMonitor.Updated += () =>
         {
-            if (!IsDisposed && IsHandleCreated) Refresh();
+            if (IsDisposed || !IsHandleCreated) return;
+            try { BeginInvoke(RefreshTraffic); } catch { }
         };
-        _refreshTimer.Start();
 
-        Refresh();
+        // --- Connection refresh timer (for connections tab) ---
+        _connTimer = new System.Windows.Forms.Timer { Interval = 3000 };
+        _connTimer.Tick += (_, _) =>
+        {
+            if (!IsDisposed && IsHandleCreated && _tabs.SelectedIndex == 1)
+                RefreshConnections();
+        };
+        _connTimer.Start();
     }
 
     // -----------------------------------------------------------------------
-    //  Grid factory (matches ActivityForm style)
+    //  Traffic tab refresh
+    // -----------------------------------------------------------------------
+
+    void RefreshTraffic()
+    {
+        try
+        {
+            var traffic = _bwMonitor.GetTraffic();
+            var (totIn, totOut, totConns, totProcs) = _bwMonitor.GetTotals();
+
+            _lblBandwidth.Text = $"  \u2193 {BandwidthMonitor.FormatRate(totIn)}    " +
+                                 $"\u2191 {BandwidthMonitor.FormatRate(totOut)}    " +
+                                 $"\u00B7  {totConns} connections  \u00B7  {totProcs} apps";
+
+            // Color the rates
+            _lblBandwidth.ForeColor = totIn + totOut > 10_485_760 // >10 MB/s
+                ? Theme.Warning
+                : Theme.TextPrimary;
+
+            _gridTraffic.SuspendLayout();
+            _gridTraffic.Rows.Clear();
+
+            foreach (var t in traffic)
+            {
+                _gridTraffic.Rows.Add(
+                    t.Name,
+                    t.Category,
+                    BandwidthMonitor.FormatRate(t.InRate),
+                    BandwidthMonitor.FormatRate(t.OutRate),
+                    t.Connections > 0 ? t.Connections.ToString() : "\u2014",
+                    BandwidthMonitor.FormatBytes(t.TotalIn),
+                    BandwidthMonitor.FormatBytes(t.TotalOut));
+            }
+
+            _gridTraffic.ResumeLayout();
+            _lblStatus.Text = $"  Live \u00B7 Updated: {DateTime.Now:h:mm:ss tt} \u00B7 Refreshing every 2s";
+        }
+        catch { }
+    }
+
+    // -----------------------------------------------------------------------
+    //  Connections tab refresh
+    // -----------------------------------------------------------------------
+
+    void RefreshConnections()
+    {
+        try
+        {
+            var entries = GetTcpEntries();
+
+            _gridConns.SuspendLayout();
+            _gridConns.Rows.Clear();
+
+            var procs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var dests = new HashSet<string>();
+
+            foreach (var e in entries)
+            {
+                procs.Add(e.ProcessName);
+                if (e.RemoteAddr is not ("0.0.0.0" or "127.0.0.1"))
+                    dests.Add(e.RemoteAddr);
+
+                string hostname = ResolveHostname(e.RemoteAddr);
+                string category = ProcessMonitor.Categorize(e.ProcessName);
+                string state = e.State < (uint)TcpStates.Length ? TcpStates[e.State] : e.State.ToString();
+
+                _gridConns.Rows.Add(
+                    e.ProcessName, category, e.LocalPort.ToString(),
+                    e.RemoteAddr,
+                    e.RemotePort == 0 ? "*" : e.RemotePort.ToString(),
+                    hostname, state);
+            }
+
+            _gridConns.ResumeLayout();
+        }
+        catch { }
+    }
+
+    // -----------------------------------------------------------------------
+    //  Grid factory
     // -----------------------------------------------------------------------
 
     static DataGridView CreateGrid()
@@ -150,83 +265,105 @@ internal sealed class NetworkForm : Form
 
     static DataGridViewTextBoxColumn Col(string header, int weight) => new()
     {
-        HeaderText = header,
-        Name = header,
-        MinimumWidth = 40,
-        FillWeight = weight,
+        HeaderText = header, Name = header,
+        MinimumWidth = 40, FillWeight = weight,
     };
 
     // -----------------------------------------------------------------------
-    //  Data refresh
+    //  Tab drawing (dark theme)
     // -----------------------------------------------------------------------
 
-    new void Refresh()
+    void DrawTab(object? sender, DrawItemEventArgs e)
     {
-        try
-        {
-            var entries = GetTcpEntries();
+        var tab = _tabs.TabPages[e.Index];
+        bool selected = _tabs.SelectedIndex == e.Index;
 
-            _grid.SuspendLayout();
-            _grid.Rows.Clear();
+        using var bgBrush = new SolidBrush(selected ? Theme.BgCard : Theme.BgPrimary);
+        e.Graphics.FillRectangle(bgBrush, e.Bounds);
 
-            var processes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var destinations = new HashSet<string>();
-
-            foreach (var e in entries)
-            {
-                processes.Add(e.ProcessName);
-                if (e.RemoteAddr is not ("0.0.0.0" or "127.0.0.1"))
-                    destinations.Add(e.RemoteAddr);
-
-                string hostname = ResolveHostname(e.RemoteAddr);
-                string category = ProcessMonitor.Categorize(e.ProcessName);
-                string state = e.State < (uint)TcpStates.Length ? TcpStates[e.State] : e.State.ToString();
-
-                _grid.Rows.Add(
-                    e.ProcessName,
-                    category,
-                    e.LocalPort.ToString(),
-                    e.RemoteAddr,
-                    e.RemotePort == 0 ? "*" : e.RemotePort.ToString(),
-                    hostname,
-                    state);
-            }
-
-            _grid.ResumeLayout();
-
-            _lblSummary.Text = $"  {entries.Count} connections \u00B7 {processes.Count} processes \u00B7 {destinations.Count} unique destinations";
-            _lblStatus.Text = $"  Last updated: {DateTime.Now:h:mm:ss tt} \u00B7 Auto-refreshing every 3s";
-        }
-        catch (Exception ex)
-        {
-            _lblStatus.Text = $"  Error: {ex.Message}";
-        }
+        using var fgBrush = new SolidBrush(selected ? Theme.Accent : Theme.TextSecondary);
+        var sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
+        e.Graphics.DrawString(tab.Text, Theme.CardTitle, fgBrush, e.Bounds, sf);
     }
 
     // -----------------------------------------------------------------------
-    //  TCP table via P/Invoke
+    //  Cell formatting
     // -----------------------------------------------------------------------
 
-    sealed record TcpEntryInfo(
-        string ProcessName, string LocalAddr, int LocalPort,
-        string RemoteAddr, int RemotePort, uint State);
+    void OnCellFormattingTraffic(object? sender, DataGridViewCellFormattingEventArgs e)
+    {
+        if (e.RowIndex < 0) return;
 
-    static int ToPort(uint raw) =>
-        ((int)(raw & 0xFF) << 8) | (int)((raw >> 8) & 0xFF);
+        var row = _gridTraffic.Rows[e.RowIndex];
+        var category = row.Cells["Category"].Value?.ToString() ?? "";
+
+        // Tint by category
+        Color tint = category switch
+        {
+            "Remote Access" => TintRemoteAccess,
+            "System" or "Windows" => TintSystem,
+            "Other" => TintUnknown,
+            _ => Color.Empty,
+        };
+        if (tint != Color.Empty)
+            row.DefaultCellStyle.BackColor = Blend(Theme.BgCard, tint);
+
+        // Color the rate columns
+        var colName = _gridTraffic.Columns[e.ColumnIndex].Name;
+        if (colName is "\u2193 In" or "\u2191 Out")
+        {
+            var text = e.Value?.ToString() ?? "";
+            if (text.Contains("MB/s") || text.Contains("GB/s"))
+                e.CellStyle!.ForeColor = Theme.Warning;
+            else if (text.Contains("KB/s"))
+                e.CellStyle!.ForeColor = Theme.Safe;
+            else
+                e.CellStyle!.ForeColor = Theme.TextMuted;
+        }
+    }
+
+    void OnCellFormattingConns(object? sender, DataGridViewCellFormattingEventArgs e)
+    {
+        if (e.RowIndex < 0) return;
+        var category = _gridConns.Rows[e.RowIndex].Cells["Category"].Value?.ToString() ?? "";
+        Color tint = category switch
+        {
+            "Remote Access" => TintRemoteAccess,
+            "System" or "Windows" => TintSystem,
+            "Other" => TintUnknown,
+            _ => Color.Empty,
+        };
+        if (tint != Color.Empty)
+            _gridConns.Rows[e.RowIndex].DefaultCellStyle.BackColor = Blend(Theme.BgCard, tint);
+    }
+
+    static Color Blend(Color bg, Color overlay)
+    {
+        float a = overlay.A / 255f;
+        return Color.FromArgb(255,
+            (int)(overlay.R * a + bg.R * (1 - a)),
+            (int)(overlay.G * a + bg.G * (1 - a)),
+            (int)(overlay.B * a + bg.B * (1 - a)));
+    }
+
+    // -----------------------------------------------------------------------
+    //  TCP table for connections tab
+    // -----------------------------------------------------------------------
+
+    sealed record TcpEntry(string ProcessName, string LocalAddr, int LocalPort,
+                           string RemoteAddr, int RemotePort, uint State);
+
+    static int ToPort(uint raw) => ((int)(raw & 0xFF) << 8) | (int)((raw >> 8) & 0xFF);
 
     static string ProcName(uint pid)
     {
-        try
-        {
-            using var proc = Process.GetProcessById((int)pid);
-            return proc.ProcessName;
-        }
+        try { using var p = Process.GetProcessById((int)pid); return p.ProcessName; }
         catch { return $"PID {pid}"; }
     }
 
-    static List<TcpEntryInfo> GetTcpEntries()
+    List<TcpEntry> GetTcpEntries()
     {
-        var list = new List<TcpEntryInfo>();
+        var list = new List<TcpEntry>();
         int size = 0;
 
         GetExtendedTcpTable(IntPtr.Zero, ref size, false, AF_INET, TCP_TABLE_OWNER_PID_ALL, 0);
@@ -239,36 +376,36 @@ internal sealed class NetworkForm : Form
                 return list;
 
             int count = Marshal.ReadInt32(buf);
-            if (count <= 0 || count > 100_000) return list;
+            if (count is <= 0 or > 100_000) return list;
 
-            int rowSize = Marshal.SizeOf<MIB_TCPROW_OWNER_PID>();
+            int rowSize = Marshal.SizeOf<TcpRow>();
             var ptr = buf + 4;
 
             for (int i = 0; i < count; i++)
             {
                 try
                 {
-                    var row = Marshal.PtrToStructure<MIB_TCPROW_OWNER_PID>(ptr);
-                    list.Add(new TcpEntryInfo(
-                        ProcName(row.dwOwningPid),
-                        new IPAddress(row.dwLocalAddr).ToString(),
-                        ToPort(row.dwLocalPort),
-                        new IPAddress(row.dwRemoteAddr).ToString(),
-                        ToPort(row.dwRemotePort),
-                        row.dwState));
+                    var row = Marshal.PtrToStructure<TcpRow>(ptr);
+                    list.Add(new TcpEntry(
+                        ProcName(row.pid),
+                        new IPAddress(row.localAddr).ToString(),
+                        ToPort(row.localPort),
+                        new IPAddress(row.remoteAddr).ToString(),
+                        ToPort(row.remotePort),
+                        row.state));
                 }
-                catch { /* skip malformed row */ }
+                catch { }
                 ptr += rowSize;
             }
         }
-        catch { /* P/Invoke failure */ }
+        catch { }
         finally { Marshal.FreeHGlobal(buf); }
 
         return list;
     }
 
     // -----------------------------------------------------------------------
-    //  DNS hostname resolution (cached, async with timeout)
+    //  DNS resolution (cached, async)
     // -----------------------------------------------------------------------
 
     string ResolveHostname(string ip)
@@ -279,9 +416,7 @@ internal sealed class NetworkForm : Form
         if (_dnsCache.TryGetValue(ip, out var cached))
             return cached;
 
-        // Return IP immediately; kick off async resolution
         _dnsCache[ip] = ip;
-
         _ = Task.Run(async () =>
         {
             try
@@ -291,46 +426,10 @@ internal sealed class NetworkForm : Form
                 if (!string.IsNullOrEmpty(entry.HostName) && entry.HostName != ip)
                     _dnsCache[ip] = entry.HostName;
             }
-            catch
-            {
-                // Resolution failed — keep the IP in cache
-            }
+            catch { }
         });
 
         return ip;
-    }
-
-    // -----------------------------------------------------------------------
-    //  Cell formatting — color-code rows by category
-    // -----------------------------------------------------------------------
-
-    void OnCellFormatting(object? sender, DataGridViewCellFormattingEventArgs e)
-    {
-        if (e.RowIndex < 0) return;
-
-        var categoryCell = _grid.Rows[e.RowIndex].Cells["Category"];
-        var category = categoryCell.Value?.ToString() ?? "";
-
-        Color tint = category switch
-        {
-            "Remote Access" => TintRemoteAccess,
-            "System" or "Windows" => TintSystem,
-            "Other" => TintUnknown,
-            _ => Color.Empty,
-        };
-
-        if (tint != Color.Empty)
-            _grid.Rows[e.RowIndex].DefaultCellStyle.BackColor = BlendColor(Theme.BgCard, tint);
-    }
-
-    static Color BlendColor(Color bg, Color overlay)
-    {
-        float a = overlay.A / 255f;
-        return Color.FromArgb(
-            255,
-            (int)(overlay.R * a + bg.R * (1 - a)),
-            (int)(overlay.G * a + bg.G * (1 - a)),
-            (int)(overlay.B * a + bg.B * (1 - a)));
     }
 
     // -----------------------------------------------------------------------
@@ -339,7 +438,7 @@ internal sealed class NetworkForm : Form
 
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
-        _refreshTimer.Stop();
+        _connTimer.Stop();
         base.OnFormClosing(e);
     }
 
@@ -347,8 +446,9 @@ internal sealed class NetworkForm : Form
     {
         if (disposing)
         {
-            _refreshTimer?.Stop();
-            _refreshTimer?.Dispose();
+            _connTimer?.Stop();
+            _connTimer?.Dispose();
+            _bwMonitor?.Dispose();
             _dnsCache.Clear();
         }
         base.Dispose(disposing);
