@@ -82,6 +82,8 @@ internal sealed class DashboardEngine : IDisposable
 
         if (_monitor is not null)
             _monitor.Updated += OnMonitorUpdated;
+
+        AddActivity("PC Guardian started monitoring", EventSeverity.Info);
     }
 
     // ── Public API ──────────────────────────────────────────────────────
@@ -96,13 +98,15 @@ internal sealed class DashboardEngine : IDisposable
     /// <summary>Ingest a completed scan report and refresh state.</summary>
     public void IngestScanResult(Report report)
     {
+        float score;
         lock (_lock)
         {
             _lastReport = report;
             _lastScanTime = report.Timestamp;
+            score = ComputeCompositeThreatScore();
         }
 
-        AddActivity("Security scan completed", EventSeverity.Success);
+        AddActivity($"Security scan completed \u2014 Score: {score:F0}", EventSeverity.Success);
         NotifyStateChanged();
     }
 
@@ -111,7 +115,7 @@ internal sealed class DashboardEngine : IDisposable
     {
         lock (_lock)
         {
-            _activity.Insert(0, new ActivityEvent(DateTime.UtcNow, message, severity));
+            _activity.Insert(0, new ActivityEvent(DateTime.Now, message, severity));
             if (_activity.Count > MaxActivityEvents)
                 _activity.RemoveAt(_activity.Count - 1);
         }
@@ -368,10 +372,36 @@ internal sealed class DashboardEngine : IDisposable
 
     // ── Tiles ───────────────────────────────────────────────────────────
 
+    static readonly (string Id, string Label, string Icon)[] DefaultTileDefinitions =
+    [
+        ("rdp",              "Remote Desktop",     "\ud83d\udda5\ufe0f"),
+        ("remote-apps",      "Remote Apps",        "\ud83d\udcf1"),
+        ("ports",            "Open Ports",         "\ud83d\udeaa"),
+        ("connections",      "Connections",        "\ud83c\udf10"),
+        ("shares",           "Network Shares",     "\ud83d\udcc2"),
+        ("services",         "Services",           "\u2699\ufe0f"),
+        ("firewall",         "Firewall",           "\ud83d\udee1\ufe0f"),
+        ("users",            "Users & Accounts",   "\ud83d\udc65"),
+        ("startup",          "Startup Programs",   "\ud83d\ude80"),
+        ("tasks",            "Scheduled Tasks",    "\ud83d\udcc5"),
+        ("antivirus",        "Antivirus",          "\ud83e\udda0"),
+        ("dns",              "DNS Settings",       "\ud83d\udccc"),
+        ("usb",              "USB Devices",        "\ud83d\udd0c"),
+        ("hardware",         "Hardware",           "\ud83d\udcbb"),
+        ("security-posture", "Security Posture",   "\ud83d\udcca"),
+        ("security-events",  "Security Events",    "\ud83d\udcdc"),
+    ];
+
     IReadOnlyList<CategoryTileData> BuildTiles()
     {
         if (_lastReport is null)
-            return Array.Empty<CategoryTileData>();
+        {
+            // Return default "Not scanned" tiles for all 16 categories
+            return DefaultTileDefinitions
+                .Select(d => new CategoryTileData(d.Id, d.Label, d.Icon, Status.Warning, "Not scanned"))
+                .ToList()
+                .AsReadOnly();
+        }
 
         var tiles = new List<CategoryTileData>(_lastReport.Categories.Count);
         foreach (var cat in _lastReport.Categories)
@@ -386,86 +416,19 @@ internal sealed class DashboardEngine : IDisposable
 
     IReadOnlyList<Recommendation> BuildRecommendations()
     {
-        if (_lastReport is null)
-            return Array.Empty<Recommendation>();
+        var posture = _monitor?.GetSecurityPosture();
+        var recs = RecommendationEngine.Generate(_lastReport, posture);
 
-        var candidates = new List<Recommendation>();
-
-        foreach (var cat in _lastReport.Categories)
+        // Apply per-user dismiss counts to adjust priority
+        if (_dismissCounts.Count > 0)
         {
-            if (cat.Status == Status.Safe)
-                continue;
-
-            foreach (var finding in cat.Findings)
-            {
-                if (finding.Status == Status.Safe)
-                    continue;
-
-                string recId = $"{cat.Id}:{finding.Label}";
-                int dismissCount = _dismissCounts.GetValueOrDefault(recId);
-
-                float impact = finding.Status == Status.Danger ? 9f : 5f;
-                float urgency = finding.Status == Status.Danger ? 9f : 4f;
-                float effort = EstimateEffort(cat.Id);
-                bool hasFix = HasAutomatedFix(cat.Id);
-
-                candidates.Add(new Recommendation(
-                    Id: recId,
-                    Title: finding.Label,
-                    Category: cat.Title,
-                    Impact: impact,
-                    Effort: effort,
-                    Urgency: urgency,
-                    DismissCount: dismissCount,
-                    HasFix: hasFix));
-            }
+            recs = recs
+                .Select(r => r with { DismissCount = _dismissCounts.GetValueOrDefault(r.Id) })
+                .ToList();
         }
 
-        // Score and sort
-        var scored = candidates
-            .Select(r => (Rec: r, Priority: ComputeRecommendationPriority(r)))
-            .OrderByDescending(x => x.Priority)
-            .ToList();
-
-        // Category diversity: max 2 per category, pick top 3
-        var result = new List<Recommendation>();
-        var categoryCounts = new Dictionary<string, int>();
-
-        foreach (var (rec, _) in scored)
-        {
-            int catCount = categoryCounts.GetValueOrDefault(rec.Category);
-            if (catCount >= 2)
-                continue;
-
-            categoryCounts[rec.Category] = catCount + 1;
-            result.Add(rec);
-
-            if (result.Count >= 3)
-                break;
-        }
-
-        return result;
+        return recs;
     }
-
-    static float ComputeRecommendationPriority(Recommendation r)
-    {
-        float fatigueFactor = MathF.Max(MathF.Pow(0.5f, r.DismissCount), 0.1f);
-        return (r.Impact * 0.4f + r.Urgency * 0.4f) * ((10f - r.Effort) / 10f) * fatigueFactor;
-    }
-
-    static float EstimateEffort(string categoryId) => categoryId switch
-    {
-        "firewall"          => 3f,
-        "antivirus"         => 2f,
-        "rdp"               => 4f,
-        "remote-apps"       => 5f,
-        "security-posture"  => 6f,
-        "users"             => 5f,
-        _                   => 4f,
-    };
-
-    static bool HasAutomatedFix(string categoryId) => categoryId is
-        "firewall" or "rdp" or "antivirus" or "startup" or "dns";
 
     // ── System Summary ──────────────────────────────────────────────────
 

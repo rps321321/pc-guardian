@@ -65,7 +65,7 @@ namespace PCGuardian
                                  pts[0].X, bounds.Bottom);
                     path.CloseFigure();
 
-                    Color topColor = Color.FromArgb(77, lineColor);   // ~30% alpha
+                    Color topColor = Color.FromArgb(100, lineColor);  // ~40% alpha
                     Color bottomColor = Color.FromArgb(0, lineColor); // 0% alpha
 
                     using (var brush = new LinearGradientBrush(
@@ -88,7 +88,7 @@ namespace PCGuardian
 
         private static void DrawLine(Graphics g, PointF[] points, Color lineColor)
         {
-            using (var pen = new Pen(lineColor, 1.5f))
+            using (var pen = new Pen(lineColor, 2.0f))
             {
                 pen.LineJoin = LineJoin.Round;
                 g.DrawLines(pen, points);
@@ -97,7 +97,7 @@ namespace PCGuardian
 
         private static void DrawDot(Graphics g, PointF center, Color color)
         {
-            const float diameter = 4f;
+            const float diameter = 5f;
             float radius = diameter / 2f;
 
             using (var brush = new SolidBrush(color))

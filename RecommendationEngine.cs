@@ -31,10 +31,13 @@ internal static class RecommendationEngine
 
         foreach (var cat in troubled)
         {
+            var riskyCount = cat.Findings.Count(f => f.Status is Status.Warning or Status.Danger);
+            bool isDanger = cat.Status == Status.Danger;
+
             switch (cat.Id)
             {
                 case "rdp":
-                    list.Add(new("disable-rdp", "Turn off Remote Desktop",
+                    list.Add(new("disable-rdp", "Disable Remote Desktop if not needed",
                         "Remote Access", Impact: 9, Effort: 2, Urgency: 8, DismissCount: 0, HasFix: true));
                     break;
 
@@ -44,14 +47,28 @@ internal static class RecommendationEngine
                     break;
 
                 case "remote-apps":
-                    list.Add(new("stop-remote-apps", "Close remote access apps",
+                    list.Add(new("stop-remote-apps", "Close unnecessary remote access apps",
                         "Remote Access", Impact: 8, Effort: 3, Urgency: 7, DismissCount: 0, HasFix: true));
                     break;
 
                 case "ports":
-                    var riskyCount = cat.Findings.Count(f => f.Status is Status.Warning or Status.Danger);
-                    list.Add(new("close-ports", $"Block {riskyCount} risky port(s)",
+                    list.Add(new("close-ports", $"Close {riskyCount} unnecessary open port(s)",
                         "Network", Impact: 7, Effort: 4, Urgency: 6, DismissCount: 0, HasFix: true));
+                    break;
+
+                case "connections":
+                    list.Add(new("review-connections", $"Investigate {riskyCount} suspicious network connection(s)",
+                        "Network", Impact: 7, Effort: 5, Urgency: isDanger ? 8f : 5f, DismissCount: 0, HasFix: false));
+                    break;
+
+                case "shares":
+                    list.Add(new("review-shares", "Remove unnecessary shared folders",
+                        "Network", Impact: 7, Effort: 3, Urgency: 6, DismissCount: 0, HasFix: false));
+                    break;
+
+                case "services":
+                    list.Add(new("disable-remote-services", "Disable unused remote services",
+                        "Services", Impact: 7, Effort: 4, Urgency: 6, DismissCount: 0, HasFix: false));
                     break;
 
                 case "antivirus":
@@ -60,8 +77,43 @@ internal static class RecommendationEngine
                     break;
 
                 case "startup":
-                    list.Add(new("review-startup", "Review startup programs",
+                    list.Add(new("review-startup", "Review suspicious startup programs",
                         "Startup", Impact: 6, Effort: 5, Urgency: 4, DismissCount: 0, HasFix: false));
+                    break;
+
+                case "users":
+                    list.Add(new("review-users", "Review logged-in user accounts",
+                        "Security", Impact: 6, Effort: 4, Urgency: 5, DismissCount: 0, HasFix: false));
+                    break;
+
+                case "tasks":
+                    list.Add(new("review-tasks", "Audit suspicious scheduled tasks",
+                        "Security", Impact: 7, Effort: 5, Urgency: 5, DismissCount: 0, HasFix: false));
+                    break;
+
+                case "dns":
+                    list.Add(new("fix-dns", "Restore DNS to trusted servers",
+                        "Network", Impact: 7, Effort: 2, Urgency: 7, DismissCount: 0, HasFix: true));
+                    break;
+
+                case "usb":
+                    list.Add(new("review-usb", "Review connected USB devices",
+                        "Hardware", Impact: 5, Effort: 2, Urgency: 4, DismissCount: 0, HasFix: false));
+                    break;
+
+                case "hardware":
+                    list.Add(new("check-hardware", "Investigate hardware health warnings",
+                        "Hardware", Impact: 6, Effort: 6, Urgency: isDanger ? 8f : 4f, DismissCount: 0, HasFix: false));
+                    break;
+
+                case "security-posture":
+                    list.Add(new("improve-posture", "Strengthen device security settings",
+                        "Security", Impact: 8, Effort: 5, Urgency: 5, DismissCount: 0, HasFix: false));
+                    break;
+
+                case "security-events":
+                    list.Add(new("review-events", "Investigate recent security events",
+                        "Security", Impact: 8, Effort: 4, Urgency: isDanger ? 9f : 5f, DismissCount: 0, HasFix: false));
                     break;
             }
         }

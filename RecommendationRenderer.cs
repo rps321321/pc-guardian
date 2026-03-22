@@ -113,19 +113,19 @@ internal static class RecommendationRenderer
         TextRenderer.DrawText(g, rec.Title, DescFont, descRect, Color.White,
             TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
 
-        // Fix button
+        // Fix button — always uses Theme.Accent (indigo), not severity color
         if (rec.HasFix)
-            DrawFixButton(g, card, accentColor, isFixHovered);
+            DrawFixButton(g, card, isFixHovered);
     }
 
-    private static void DrawFixButton(Graphics g, Rectangle card, Color accentColor, bool isHovered)
+    private static void DrawFixButton(Graphics g, Rectangle card, bool isHovered)
     {
         var fixRect = GetFixButtonRect(card);
         int alpha = isHovered ? 89 : 51; // 35% or 20% of 255
-        using (var btnBrush = new SolidBrush(Color.FromArgb(alpha, accentColor)))
+        using (var btnBrush = new SolidBrush(Color.FromArgb(alpha, Theme.Accent)))
             FillRoundedRect(g, fixRect, FixRadius, btnBrush);
 
-        TextRenderer.DrawText(g, "Fix", FixFont, fixRect, accentColor,
+        TextRenderer.DrawText(g, "Fix", FixFont, fixRect, Theme.Accent,
             TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
     }
 

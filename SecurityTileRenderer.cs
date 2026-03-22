@@ -93,10 +93,13 @@ namespace PCGuardian
                     _ => "",
                 };
 
-                string abbr = Abbreviations.TryGetValue(tile.Id, out var a) ? a : tile.Id;
+                string abbr = Abbreviations.GetValueOrDefault(tile.Id,
+                    tile.Id[..Math.Min(4, tile.Id.Length)].ToUpper())!;
                 string text = $"{icon} {abbr}";
 
-                using (var textBrush = new SolidBrush(statusColor))
+                // Use white text for danger tiles so it's readable on red background
+                Color textColor = tile.Status == Status.Danger ? Color.White : statusColor;
+                using (var textBrush = new SolidBrush(textColor))
                 {
                     var sf = new StringFormat
                     {
@@ -151,7 +154,7 @@ namespace PCGuardian
 
             return status switch
             {
-                Status.Danger => (int)(pulseAlpha * 255),
+                Status.Danger => (int)(Math.Clamp(pulseAlpha, 0.15f, 0.55f) * 255),
                 _ => (int)(0.15f * 255), // Safe + Warning both 15%
             };
         }

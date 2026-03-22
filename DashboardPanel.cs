@@ -35,7 +35,7 @@ internal sealed class DashboardPanel : UserControl
     const int ContentWidth = PanelWidth - Margin * 2; // 608
 
     // Fonts (use Theme statics where available, create extras as needed)
-    static readonly Font _sectionFont = new("Segoe UI Semibold", 10f);
+    static readonly Font _sectionFont = new("Segoe UI Semibold", 11f);
     static readonly Font _smallFont = Theme.Small;
     static readonly Font _tileFont = new("Segoe UI", 7.5f);
     static readonly Font _btnFont = new("Segoe UI Semibold", 9f);
@@ -48,6 +48,7 @@ internal sealed class DashboardPanel : UserControl
     public event Action? ActivityRequested;
     public event Action? NetworkRequested;
     public event Action? SettingsRequested;
+    public event Action<string>? FixRequested; // passes recommendation Id
 
     public DashboardPanel(DashboardEngine engine)
     {
@@ -208,14 +209,14 @@ internal sealed class DashboardPanel : UserControl
             int idx = (_scoreHistoryIndex - _scoreHistoryCount + i + _scoreHistory.Length) % _scoreHistory.Length;
             samples[i] = history[idx];
         }
-        SparklineRenderer.Draw(g, new Rectangle(380, 80, 140, 48), samples, Theme.Accent);
+        SparklineRenderer.Draw(g, new Rectangle(380, 80, 140, 48), samples, Theme.ScoreColor(_state.ThreatScore));
     }
 
     // ── Trend arrow ─────────────────────────────────────────────────
 
     void DrawTrendArrow(Graphics g, TrendDirection trend, float delta)
     {
-        int x = 380, y = 136;
+        int x = 524, y = 136;
         var color = trend switch
         {
             TrendDirection.Improving => Theme.Safe,
@@ -231,7 +232,7 @@ internal sealed class DashboardPanel : UserControl
         };
 
         using var brush = new SolidBrush(color);
-        g.DrawString($"{arrow} {delta:+0.0;-0.0;0}", _trendFont, brush, x, y);
+        g.DrawString($"{arrow} {delta:+#;-#;0}", _trendFont, brush, x, y);
     }
 
     // ── Gauge bars (Y=220..300, 2x2 grid) ──────────────────────────
@@ -248,8 +249,10 @@ internal sealed class DashboardPanel : UserControl
 
         GaugeBarRenderer.Draw(g, new Rectangle(x0, y0, gaugeW, gaugeH), "CPU", cpu, cpu * gaugeProgress, $"{cpu:F0}%");
         GaugeBarRenderer.Draw(g, new Rectangle(x1, y0, gaugeW, gaugeH), "GPU", gpu, gpu * gaugeProgress, $"{gpu:F0}%");
-        GaugeBarRenderer.Draw(g, new Rectangle(x0, y1, gaugeW, gaugeH), "RAM", ram, ram * gaugeProgress, $"{ram}%");
-        GaugeBarRenderer.Draw(g, new Rectangle(x1, y1, gaugeW, gaugeH), "DISK", disk, disk * gaugeProgress, $"{disk:F1} MB/s", isDisk: true);
+        GaugeBarRenderer.Draw(g, new Rectangle(x0, y1, gaugeW, gaugeH), "RAM", ram, ram * gaugeProgress, $"{ram:F0}%");
+        float diskNorm = Math.Min(disk / 500f * 100f, 100f);
+        string diskText = disk < 10f ? $"{disk:F1} MB/s" : $"{disk:F0} MB/s";
+        GaugeBarRenderer.Draw(g, new Rectangle(x1, y1, gaugeW, gaugeH), "DISK", diskNorm, diskNorm * gaugeProgress, diskText, isDisk: true);
     }
 
     // ── Section header ──────────────────────────────────────────────
@@ -278,10 +281,10 @@ internal sealed class DashboardPanel : UserControl
         if (tiles == null || tiles.Count == 0) return;
 
         float pulseAlpha = _hasDangerTiles
-            ? 0.5f + 0.5f * (float)Math.Sin((DateTime.UtcNow - _pulseStart).TotalSeconds * Math.PI * 2) // 1Hz
-            : 1f;
+            ? 0.15f + 0.10f * (0.5f + 0.5f * (float)Math.Sin((DateTime.UtcNow - _pulseStart).TotalSeconds * Math.PI * 2)) // 1Hz, 0.15-0.25
+            : 0.15f;
 
-        var gridBounds = new Rectangle(Margin, 328, ContentWidth, 92);
+        var gridBounds = new Rectangle(Margin, 328, ContentWidth, 86);
 
         // Determine hovered tile index
         int hoveredIndex = -1;
@@ -339,12 +342,21 @@ internal sealed class DashboardPanel : UserControl
 
         RecommendationRenderer.Draw(g, bounds, recs, hoveredIndex, hoveredButton);
 
-        // Register hit regions for each card
+        // Register hit regions for each card + fix button
         for (int i = 0; i < recs.Count && i < 3; i++)
         {
             int y = startY + i * (cardH + cardGap);
-            var rect = new Rectangle(Margin, y, ContentWidth, cardH);
-            _hitRegions.Add(new HitRegion(rect, $"rec-{i}", null));
+            var cardRect = new Rectangle(Margin, y, ContentWidth, cardH);
+
+            // Fix button region (right side of card, 56x24)
+            if (recs[i].HasFix)
+            {
+                var fixRect = new Rectangle(cardRect.Right - 64, cardRect.Y + 6, 56, 24);
+                var recId = recs[i].Id;
+                _hitRegions.Add(new HitRegion(fixRect, $"fix-{i}", () => FixRequested?.Invoke(recId)));
+            }
+
+            _hitRegions.Add(new HitRegion(cardRect, $"rec-{i}", null));
         }
     }
 
@@ -352,7 +364,7 @@ internal sealed class DashboardPanel : UserControl
 
     void DrawQuickActions(Graphics g)
     {
-        int y = 706, btnW = 140, btnH = 28, gap = 8;
+        int y = 706, btnW = 140, btnH = 24, gap = 8;
         int totalW = btnW * 4 + gap * 3;
         int startX = (PanelWidth - totalW) / 2;
 
@@ -371,12 +383,17 @@ internal sealed class DashboardPanel : UserControl
             var rect = new Rectangle(x, y, btnW, btnH);
             bool isHovered = _hoveredId == btn.Id;
 
-            var bgColor = isHovered ? Theme.BgCardHover : Theme.BgCard;
+            bool isScan = i == 0;
+            Color bgColor;
+            if (isScan)
+                bgColor = isHovered ? Color.FromArgb(89, Theme.Accent) : Color.FromArgb(51, Theme.Accent);
+            else
+                bgColor = isHovered ? Theme.BgCardHover : Theme.BgCard;
             using var bgBrush = new SolidBrush(bgColor);
             using var path = RoundedRect(rect, 4);
             g.FillPath(bgBrush, path);
 
-            using var textBrush = new SolidBrush(Theme.TextPrimary);
+            using var textBrush = new SolidBrush(isScan ? Theme.Accent : Theme.TextPrimary);
             var textSize = g.MeasureString(btn.Label, _btnFont);
             float tx = rect.X + (rect.Width - textSize.Width) / 2;
             float ty = rect.Y + (rect.Height - textSize.Height) / 2;

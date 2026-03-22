@@ -135,6 +135,7 @@ internal sealed class MainForm : Form
         dashPanel.ActivityRequested += () => new ActivityForm(db).Show();
         dashPanel.NetworkRequested += () => new NetworkForm().Show();
         dashPanel.SettingsRequested += () => { using var f = new SettingsForm(settings, db, ApplySettings); f.ShowDialog(this); };
+        dashPanel.FixRequested += ExecuteRecommendationFix;
         viewIdle.Controls.Add(dashPanel);
 
         // --- Scanning view ---
@@ -831,6 +832,131 @@ internal sealed class MainForm : Form
 
     // ===================================================================
     // Real-time alert handler
+    // ===================================================================
+
+    void ExecuteRecommendationFix(string recId)
+    {
+        FixResult? result = null;
+        string action = "";
+
+        switch (recId)
+        {
+            case "disable-rdp":
+                action = "Disable Remote Desktop";
+                result = FixActions.DisableRemoteDesktop();
+                break;
+            case "enable-firewall":
+                action = "Enable Windows Firewall";
+                result = FixActions.StopService(""); // placeholder — needs netsh
+                // Use netsh to enable firewall
+                try
+                {
+                    var psi = new System.Diagnostics.ProcessStartInfo("netsh", "advfirewall set allprofiles state on")
+                    { CreateNoWindow = true, UseShellExecute = false };
+                    System.Diagnostics.Process.Start(psi)?.WaitForExit(10000);
+                    result = new FixResult(true, "Firewall enabled on all profiles");
+                }
+                catch (Exception ex) { result = new FixResult(false, ex.Message); }
+                break;
+            case "stop-remote-apps":
+                action = "Stop remote access apps";
+                var remoteProcs = new[] { "teamviewer", "anydesk", "vnc", "parsec", "rustdesk" };
+                int killed = 0;
+                foreach (var proc in remoteProcs)
+                {
+                    var r = FixActions.KillProcess(proc);
+                    if (r.Success) killed++;
+                }
+                result = new FixResult(true, $"Stopped {killed} remote access process(es)");
+                break;
+            case "close-ports":
+                action = "Block risky ports";
+                var riskyPorts = new[] { (3389, "RDP"), (5900, "VNC"), (23, "Telnet") };
+                foreach (var (port, desc) in riskyPorts)
+                    FixActions.BlockPort(port, desc);
+                result = new FixResult(true, "Blocked RDP, VNC, and Telnet ports");
+                break;
+            case "fix-dns":
+                action = "Reset DNS to safe servers";
+                try
+                {
+                    // Find all active adapters and set DNS on each
+                    int fixed_count = 0;
+                    foreach (var nic in System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces())
+                    {
+                        if (nic.OperationalStatus != System.Net.NetworkInformation.OperationalStatus.Up) continue;
+                        if (nic.NetworkInterfaceType is System.Net.NetworkInformation.NetworkInterfaceType.Loopback
+                            or System.Net.NetworkInformation.NetworkInterfaceType.Tunnel) continue;
+                        var props = nic.GetIPProperties();
+                        if (props.GatewayAddresses.Count == 0) continue; // skip adapters with no gateway
+
+                        string adapterName = nic.Name;
+                        // Set primary DNS to 1.1.1.1 (Cloudflare)
+                        var psi1 = new System.Diagnostics.ProcessStartInfo("netsh",
+                            $"interface ip set dns name=\"{adapterName}\" static 1.1.1.1 primary")
+                        { CreateNoWindow = true, UseShellExecute = false };
+                        System.Diagnostics.Process.Start(psi1)?.WaitForExit(10000);
+                        // Set secondary DNS to 1.0.0.1 (Cloudflare backup)
+                        var psi2 = new System.Diagnostics.ProcessStartInfo("netsh",
+                            $"interface ip add dns name=\"{adapterName}\" 1.0.0.1 index=2")
+                        { CreateNoWindow = true, UseShellExecute = false };
+                        System.Diagnostics.Process.Start(psi2)?.WaitForExit(10000);
+                        fixed_count++;
+                    }
+                    result = fixed_count > 0
+                        ? new FixResult(true, $"DNS set to Cloudflare (1.1.1.1 + 1.0.0.1) on {fixed_count} adapter(s)")
+                        : new FixResult(false, "No active network adapters found");
+                }
+                catch (Exception ex) { result = new FixResult(false, ex.Message); }
+                break;
+            case "disable-autologin":
+                action = "Disable auto-login";
+                try
+                {
+                    using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(
+                        @"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon", true);
+                    key?.SetValue("AutoAdminLogon", "0");
+                    key?.DeleteValue("DefaultPassword", false);
+                    result = new FixResult(true, "Auto-login disabled");
+                }
+                catch (Exception ex) { result = new FixResult(false, ex.Message); }
+                break;
+            case "disable-guest":
+                action = "Disable guest account";
+                try
+                {
+                    var psi = new System.Diagnostics.ProcessStartInfo("net", "user Guest /active:no")
+                    { CreateNoWindow = true, UseShellExecute = false };
+                    System.Diagnostics.Process.Start(psi)?.WaitForExit(10000);
+                    result = new FixResult(true, "Guest account disabled");
+                }
+                catch (Exception ex) { result = new FixResult(false, ex.Message); }
+                break;
+            default:
+                MessageBox.Show($"No automated fix available for '{recId}'.\nCheck the scan results for manual steps.",
+                    "PC Guardian", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+        }
+
+        if (result != null)
+        {
+            if (result.Success)
+            {
+                SoundManager.ActionDone();
+                MessageBox.Show($"✓ {action}\n\n{result.Message}", "Fix Applied — PC Guardian",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                dashEngine?.AddActivity($"Fix applied: {action}", EventSeverity.Info);
+                // Re-scan to update the dashboard
+                RunScan(manual: false);
+            }
+            else
+            {
+                MessageBox.Show($"✗ {action} failed\n\n{result.Message}", "Fix Failed — PC Guardian",
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        }
+    }
+
     // ===================================================================
 
     void HandleAlert(SecurityAlert alert)

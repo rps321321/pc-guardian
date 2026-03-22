@@ -45,26 +45,29 @@ namespace PCGuardian
                 g.DrawArc(scorePen, innerBounds, -90, sweepAngle);
             }
 
-            // 4. Center text — score number
+            // 4. Center text — score number + grade letter
+            float cx = bounds.X + bounds.Width / 2f;
+            float cy = bounds.Y + bounds.Height / 2f;
+
             using (var scoreFontLarge = new Font("Segoe UI", 36f, FontStyle.Bold, GraphicsUnit.Point))
             using (var whiteBrush = new SolidBrush(Color.White))
             {
-                var sf = new StringFormat
-                {
-                    Alignment = StringAlignment.Center,
-                    LineAlignment = StringAlignment.Center
-                };
                 string scoreText = ((int)(score * easedProgress)).ToString();
-                g.DrawString(scoreText, scoreFontLarge, whiteBrush, bounds, sf);
+                var numberSize = g.MeasureString(scoreText, scoreFontLarge);
+                float numberX = cx - numberSize.Width / 2f;
+                float numberY = cy - numberSize.Height / 2f - 12f;
+                g.DrawString(scoreText, scoreFontLarge, whiteBrush, numberX, numberY);
             }
 
-            // 4. Center text — grade letter
             using (var gradeFont = new Font("Segoe UI Semibold", 14f, FontStyle.Regular, GraphicsUnit.Point))
             using (var gradeBrush = new SolidBrush(scoreColor))
             {
+                // Measure the large score font to position grade below it
+                using var measureFont = new Font("Segoe UI", 36f, FontStyle.Bold, GraphicsUnit.Point);
+                var numberHeight = g.MeasureString("0", measureFont).Height;
                 var gradeSize = g.MeasureString(grade, gradeFont);
-                float gradeX = bounds.X + (bounds.Width - gradeSize.Width) / 2f;
-                float gradeY = bounds.Y + bounds.Height / 2f + 4f;
+                float gradeX = cx - gradeSize.Width / 2f;
+                float gradeY = cy - 12f + numberHeight / 2f + 8f;
                 g.DrawString(grade, gradeFont, gradeBrush, gradeX, gradeY);
             }
 
@@ -83,7 +86,7 @@ namespace PCGuardian
             {
                 var labelSize = g.MeasureString(label, labelFont);
                 float labelX = bounds.X + (bounds.Width - labelSize.Width) / 2f;
-                float labelY = bounds.Bottom + 2f;
+                float labelY = bounds.Bottom + 8f;
                 g.DrawString(label, labelFont, labelBrush, labelX, labelY);
             }
         }

@@ -13,8 +13,8 @@ internal static class GaugeBarRenderer
     private static readonly Font LabelFont = new("Segoe UI", 9f);
     private static readonly Font ValueFont = new("Segoe UI Semibold", 9f);
 
-    private const int LabelWidth = 56;
-    private const int ValueWidth = 48;
+    private const int LabelWidth = 48;
+    private const int DefaultValueWidth = 72;
     private const int TrackHeight = 12;
     private const int CornerRadius = 6;
 
@@ -30,6 +30,11 @@ internal static class GaugeBarRenderer
         g.SmoothingMode = SmoothingMode.AntiAlias;
         g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
 
+        // --- Measure value text to allocate enough space ---
+        int valueWidth = Math.Max(
+            DefaultValueWidth,
+            (int)Math.Ceiling(g.MeasureString(valueText, ValueFont).Width) + 4);
+
         // --- Label (left) ---
         var labelRect = new Rectangle(bounds.X, bounds.Y, LabelWidth, bounds.Height);
         TextRenderer.DrawText(
@@ -37,7 +42,7 @@ internal static class GaugeBarRenderer
             TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
 
         // --- Track (center) ---
-        int trackWidth = bounds.Width - LabelWidth - ValueWidth;
+        int trackWidth = bounds.Width - LabelWidth - valueWidth;
         int trackX = bounds.X + LabelWidth;
         int trackY = bounds.Y + (bounds.Height - TrackHeight) / 2;
         var trackRect = new Rectangle(trackX, trackY, trackWidth, TrackHeight);
@@ -80,7 +85,7 @@ internal static class GaugeBarRenderer
         }
 
         // --- Value text (right) ---
-        var valueRect = new Rectangle(bounds.X + LabelWidth + trackWidth, bounds.Y, ValueWidth, bounds.Height);
+        var valueRect = new Rectangle(bounds.X + LabelWidth + trackWidth, bounds.Y, valueWidth, bounds.Height);
         TextRenderer.DrawText(
             g, valueText, ValueFont, valueRect, Color.White,
             TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
