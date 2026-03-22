@@ -19,6 +19,7 @@ internal static class RiskScore
         ["antivirus"]   = (20, 10),
         ["dns"]         = (10,  5),
         ["usb"]         = ( 3,  2),
+        ["hardware"]    = (15,  5),
     };
 
     public static int Calculate(Report report)

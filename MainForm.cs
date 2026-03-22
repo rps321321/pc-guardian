@@ -34,6 +34,7 @@ internal sealed class MainForm : Form
     ProcessMonitor? monitor;
     ITServer? itServer;
     RealTimeMonitor? realTimeMonitor;
+    HardwareMonitor? hwMonitor;
     Report? lastReport;
     Report? previousReport;
     ToolTip tip = null!;
@@ -50,6 +51,7 @@ internal sealed class MainForm : Form
         "Checking startup programs...",
         "Reviewing scheduled tasks...",
         "Checking antivirus & updates...",
+        "Checking hardware health...",
         "Almost done...",
     ];
 
@@ -73,6 +75,8 @@ internal sealed class MainForm : Form
             try { itServer.Start(settings.ITSharingPort, string.IsNullOrWhiteSpace(settings.ITSharingPin) ? null : settings.ITSharingPin); }
             catch { }
         }
+
+        try { hwMonitor = new HardwareMonitor(db); } catch { /* LHM init failed */ }
 
         // Real-time alerts
         realTimeMonitor = new RealTimeMonitor();
@@ -385,10 +389,23 @@ internal sealed class MainForm : Form
             "See your PC's security as a simple 0\u2013100 score\nwith a letter grade. Higher is better."));
         homeFlow.Controls.Add(pnlActions2);
 
+        var pnlActions3 = new FlowLayoutPanel
+        {
+            Width = hw, Height = 78,
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false,
+            Margin = new(0, 0, 0, 8),
+        };
+        pnlActions3.Controls.Add(QuickActionCard("\uD83C\uDF21\uFE0F", "Hardware", "Temps, fans, storage health", hw / 3 - 8,
+            () => { if (hwMonitor != null) new HardwareForm(hwMonitor, db).Show();
+                    else MessageBox.Show("Hardware monitoring is not available.", "PC Guardian"); },
+            "Monitor CPU and GPU temperatures, fan speeds,\nstorage health, and battery condition in real-time.\nAlso detects potential crypto miners."));
+        homeFlow.Controls.Add(pnlActions3);
+
         // Keyboard shortcuts hint
         homeFlow.Controls.Add(new Label
         {
-            Text = "Ctrl+S Scan  \u00B7  Ctrl+E Export  \u00B7  Ctrl+L Activity  \u00B7  Ctrl+N Network  \u00B7  F5 Refresh",
+            Text = "Ctrl+S Scan  \u00B7  Ctrl+E Export  \u00B7  Ctrl+L Activity  \u00B7  Ctrl+N Network  \u00B7  Ctrl+H Hardware  \u00B7  F5 Refresh",
             Font = Theme.Small,
             ForeColor = Theme.TextMuted,
             AutoSize = true,
@@ -409,7 +426,7 @@ internal sealed class MainForm : Form
         pnlInfo.Controls.Add(new Panel { Width = 3, Dock = DockStyle.Left, BackColor = Theme.TextMuted });
         string[] infoLines =
         [
-            "\u2022  13 security checks across remote access, ports, firewall, AV, DNS, USB & more",
+            "\u2022  14 security checks across remote access, ports, firewall, AV, DNS, USB & more",
             "\u2022  Background process monitoring with full activity history",
             "\u2022  Periodic automatic scans with tray notifications",
             "\u2022  100% local \u2014 nothing leaves your computer",
@@ -585,7 +602,7 @@ internal sealed class MainForm : Form
             stepIndex = 0;
             stepTimer.Start();
 
-            var report = await Task.Run(ScanEngine.RunFullScan);
+            var report = await Task.Run(() => ScanEngine.RunFullScan(hwMonitor));
 
             // Guard: form may have been disposed while scan was running
             if (IsDisposed || !IsHandleCreated) return;
@@ -1159,6 +1176,9 @@ internal sealed class MainForm : Form
             case Keys.Control | Keys.N: // Ctrl+N = Network Monitor
                 new NetworkForm().Show();
                 return true;
+            case Keys.Control | Keys.H:
+                if (hwMonitor != null) new HardwareForm(hwMonitor, db).Show();
+                return true;
             case Keys.Control | Keys.Oemcomma: // Ctrl+, = Settings
                 using (var f = new SettingsForm(settings, db, ApplySettings))
                     f.ShowDialog(this);
@@ -1181,6 +1201,7 @@ internal sealed class MainForm : Form
     {
         if (disposing)
         {
+            hwMonitor?.Dispose();
             realTimeMonitor?.Dispose();
             itServer?.Dispose();
             tip?.Dispose();

@@ -842,10 +842,113 @@ internal static class ScanEngine
     }
 
     // -----------------------------------------------------------------------
+    // 14. Hardware Health
+    // -----------------------------------------------------------------------
+
+    static Category CheckHardwareHealth(HardwareMonitor? hw)
+    {
+        var findings = new List<Finding>();
+
+        if (hw is null || hw.GetSnapshot() is not { } snap)
+        {
+            findings.Add(new("Hardware monitoring", "Hardware monitoring not available", Status.Safe));
+            return new("hardware", "\uD83C\uDF21\uFE0F", "Hardware Health",
+                "Is your hardware running safely?", Status.Safe,
+                "Hardware monitoring not available", findings,
+                "Install hardware monitoring drivers for detailed health info.");
+        }
+
+        // CPU Temperature
+        if (snap.CpuTemp is { } cpuTemp)
+        {
+            var s = cpuTemp > 85 ? Status.Danger : cpuTemp >= 70 ? Status.Warning : Status.Safe;
+            findings.Add(new("CPU Temperature",
+                $"{cpuTemp:F0}\u00B0C" + (s == Status.Danger ? " \u2014 critically hot!" : s == Status.Warning ? " \u2014 running warm" : " \u2014 normal"),
+                s));
+        }
+
+        // GPU Temperature (skip if no GPU)
+        if (snap.HasGpu && snap.GpuTemp is { } gpuTemp)
+        {
+            var s = gpuTemp > 90 ? Status.Danger : gpuTemp >= 75 ? Status.Warning : Status.Safe;
+            findings.Add(new("GPU Temperature",
+                $"{gpuTemp:F0}\u00B0C" + (s == Status.Danger ? " \u2014 critically hot!" : s == Status.Warning ? " \u2014 running warm" : " \u2014 normal"),
+                s));
+        }
+
+        // CPU Load
+        if (snap.CpuLoad is { } cpuLoad)
+        {
+            var s = cpuLoad > 95 ? Status.Danger : cpuLoad > 80 ? Status.Warning : Status.Safe;
+            findings.Add(new("CPU Load",
+                $"{cpuLoad:F0}%" + (s == Status.Danger ? " \u2014 maxed out!" : s == Status.Warning ? " \u2014 high usage" : " \u2014 normal"),
+                s));
+        }
+
+        // GPU Load (skip if no GPU)
+        if (snap.HasGpu && snap.GpuLoad is { } gpuLoad)
+        {
+            var s = gpuLoad > 95 ? Status.Danger : gpuLoad > 80 ? Status.Warning : Status.Safe;
+            findings.Add(new("GPU Load",
+                $"{gpuLoad:F0}%" + (s == Status.Danger ? " \u2014 maxed out!" : s == Status.Warning ? " \u2014 high usage" : " \u2014 normal"),
+                s));
+        }
+
+        // Storage health per drive
+        foreach (var drive in snap.Drives)
+        {
+            if (drive.RemainingLife is { } life)
+            {
+                var s = life < 5 ? Status.Danger : life < 20 ? Status.Warning : Status.Safe;
+                findings.Add(new($"Drive: {drive.Name}",
+                    $"{life}% life remaining" + (s == Status.Danger ? " \u2014 replace soon!" : s == Status.Warning ? " \u2014 wearing out" : ""),
+                    s));
+            }
+        }
+
+        // Battery degradation (skip if no battery)
+        if (snap.Battery is { } battery && battery.DegradationPercent is { } degradation)
+        {
+            var s = degradation > 70 ? Status.Danger : degradation > 40 ? Status.Warning : Status.Safe;
+            findings.Add(new("Battery Health",
+                $"{degradation:F0}% degraded" + (s == Status.Danger ? " \u2014 battery needs replacement" : s == Status.Warning ? " \u2014 noticeable wear" : " \u2014 healthy"),
+                s));
+        }
+
+        // Fan speed
+        if (snap.CpuFanRpm is { } fanRpm && fanRpm == 0)
+        {
+            findings.Add(new("CPU Fan", "Fan stopped \u2014 possible failure!", Status.Warning));
+        }
+
+        // Crypto miner check
+        var (isSuspicious, reason) = hw.CheckForMining();
+        if (isSuspicious)
+            findings.Add(new("Crypto Mining Detected", reason, Status.Danger));
+
+        if (findings.Count == 0)
+            findings.Add(new("Hardware", "All readings normal", Status.Safe));
+
+        var status = Worst(findings.Select(f => f.Status));
+        string tip = status == Status.Danger
+            ? "Critical hardware issue detected \u2014 check temperatures, drives, or suspicious GPU activity immediately."
+            : status == Status.Warning
+            ? "Some hardware metrics need attention \u2014 monitor temperatures and drive health."
+            : "All hardware is running within safe parameters.";
+
+        return new("hardware", "\uD83C\uDF21\uFE0F", "Hardware Health",
+            "Is your hardware running safely?", status,
+            status == Status.Danger ? "Hardware issues detected!"
+            : status == Status.Warning ? "Some hardware metrics need attention"
+            : "Hardware is healthy",
+            findings, tip);
+    }
+
+    // -----------------------------------------------------------------------
     // Full scan — each check is wrapped so one failure doesn't kill the scan
     // -----------------------------------------------------------------------
 
-    public static Report RunFullScan()
+    public static Report RunFullScan(HardwareMonitor? hw = null)
     {
         var categories = new List<Category>();
 
@@ -864,6 +967,7 @@ internal static class ScanEngine
             ("antivirus", "\uD83E\uDDA0", "Antivirus & Updates", CheckAntivirusStatus),
             ("dns", "\uD83D\uDD0D", "DNS Settings", CheckDnsSettings),
             ("usb", "\uD83D\uDD0C", "USB Devices", CheckUsbDevices),
+            ("hardware", "\uD83C\uDF21\uFE0F", "Hardware Health", () => CheckHardwareHealth(hw)),
         };
 
         foreach (var (id, icon, title, fn) in checks)

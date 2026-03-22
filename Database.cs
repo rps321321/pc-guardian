@@ -21,6 +21,12 @@ internal sealed record ScanHistoryRow(
     int Id, string Timestamp, string Overall,
     int SafeCount, int WarningCount, int DangerCount, string? DetailsJson);
 
+internal sealed record HardwareMetricRow(
+    int Id, string Timestamp, double? CpuTemp, double? CpuLoad,
+    double? GpuTemp, double? GpuLoad, double? FanRpm,
+    double? CpuPower, double? BatteryLevel, double? BatteryHealth,
+    string? TopProcesses);
+
 internal sealed class Database : IDisposable
 {
     private readonly string _connStr;
@@ -89,9 +95,24 @@ internal sealed class Database : IDisposable
                 remote_port    INTEGER
             );
 
+            CREATE TABLE IF NOT EXISTS hardware_metrics (
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp      TEXT NOT NULL,
+                cpu_temp       REAL,
+                cpu_load       REAL,
+                gpu_temp       REAL,
+                gpu_load       REAL,
+                fan_rpm        REAL,
+                cpu_power      REAL,
+                battery_level  REAL,
+                battery_health REAL,
+                top_processes  TEXT
+            );
+
             CREATE INDEX IF NOT EXISTS idx_sessions_pid_ended ON sessions(pid, ended);
             CREATE INDEX IF NOT EXISTS idx_sessions_started ON sessions(started);
             CREATE INDEX IF NOT EXISTS idx_scan_history_ts ON scan_history(timestamp);
+            CREATE INDEX IF NOT EXISTS idx_hw_ts ON hardware_metrics(timestamp);
             """;
         cmd.ExecuteNonQuery();
     }
@@ -394,6 +415,59 @@ internal sealed class Database : IDisposable
         return list;
     }
 
+    // ── Hardware Metrics ──────────────────────────────────────────────
+
+    public void LogHardwareMetrics(DateTime timestamp, float? cpuTemp, float? cpuLoad,
+        float? gpuTemp, float? gpuLoad, float? fanRpm, float? cpuPower,
+        float? batteryLevel, float? batteryHealth, string? topProcesses)
+    {
+        using var db = Open();
+        using var cmd = db.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO hardware_metrics (timestamp, cpu_temp, cpu_load, gpu_temp, gpu_load, fan_rpm, cpu_power, battery_level, battery_health, top_processes)
+            VALUES (@ts, @ct, @cl, @gt, @gl, @fr, @cp, @bl, @bh, @tp);
+            """;
+        cmd.Parameters.AddWithValue("@ts", timestamp.ToUniversalTime().ToString("o"));
+        cmd.Parameters.AddWithValue("@ct", (object?)cpuTemp ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@cl", (object?)cpuLoad ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@gt", (object?)gpuTemp ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@gl", (object?)gpuLoad ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@fr", (object?)fanRpm ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@cp", (object?)cpuPower ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@bl", (object?)batteryLevel ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@bh", (object?)batteryHealth ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@tp", (object?)topProcesses ?? DBNull.Value);
+        cmd.ExecuteNonQuery();
+    }
+
+    public List<HardwareMetricRow> GetHardwareHistory(int hours = 24)
+    {
+        using var db = Open();
+        using var cmd = db.CreateCommand();
+        cmd.CommandText = "SELECT id, timestamp, cpu_temp, cpu_load, gpu_temp, gpu_load, fan_rpm, cpu_power, battery_level, battery_health, top_processes FROM hardware_metrics WHERE timestamp > datetime('now', '-' || @hours || ' hours') ORDER BY timestamp ASC;";
+        cmd.Parameters.AddWithValue("@hours", hours);
+        using var r = cmd.ExecuteReader();
+        var list = new List<HardwareMetricRow>();
+        while (r.Read())
+            list.Add(new HardwareMetricRow(
+                r.GetInt32(0), r.GetString(1),
+                r.IsDBNull(2) ? null : r.GetDouble(2),
+                r.IsDBNull(3) ? null : r.GetDouble(3),
+                r.IsDBNull(4) ? null : r.GetDouble(4),
+                r.IsDBNull(5) ? null : r.GetDouble(5),
+                r.IsDBNull(6) ? null : r.GetDouble(6),
+                r.IsDBNull(7) ? null : r.GetDouble(7),
+                r.IsDBNull(8) ? null : r.GetDouble(8),
+                r.IsDBNull(9) ? null : r.GetDouble(9),
+                r.IsDBNull(10) ? null : r.GetString(10)));
+        return list;
+    }
+
+    public List<HardwareMetricRow> GetCorrelatedHistory(int hours = 24)
+    {
+        return GetHardwareHistory(hours);
+    }
+
     // ── Maintenance ─────────────────────────────────────────────────
 
     /// <summary>User-triggered only. Deletes all logged data and reclaims space.</summary>
@@ -406,6 +480,7 @@ internal sealed class Database : IDisposable
             DELETE FROM programs;
             DELETE FROM scan_history;
             DELETE FROM connections_log;
+            DELETE FROM hardware_metrics;
             """;
         cmd.ExecuteNonQuery();
 

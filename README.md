@@ -12,7 +12,7 @@ Designed so anyone can use it, even if they've never touched a terminal.
 
 ## What It Does
 
-PC Guardian runs **13 security checks** using native Windows APIs — no PowerShell scripts, no cloud, no telemetry. Everything stays on your machine.
+PC Guardian runs **14 security checks** using native Windows APIs — no PowerShell scripts, no cloud, no telemetry. Everything stays on your machine.
 
 | Check | What It Looks For |
 |-------|-------------------|
@@ -29,6 +29,7 @@ PC Guardian runs **13 security checks** using native Windows APIs — no PowerSh
 | Antivirus Status | Is Windows Defender active and up to date? |
 | DNS Settings | Check for DNS hijacking |
 | USB Devices | Recently connected USB devices |
+| Hardware Health | CPU/GPU temps, fan speeds, storage S.M.A.R.T., battery, crypto miner detection |
 
 Each check returns a clear status: **All Good**, **Worth Checking**, or **Needs Attention** — with plain-English explanations and tips on what to do.
 
@@ -37,7 +38,7 @@ Each check returns a clear status: **All Good**, **Worth Checking**, or **Needs 
 ## Features
 
 ### Security Scanner
-- 13 scan categories covering remote access, network, system services, and more
+- 14 scan categories covering remote access, network, system services, and more
 - One-click scan with real-time progress
 - Color-coded results (green/yellow/red) with expandable details
 - Risk score (0-100) that tracks over time
@@ -69,6 +70,16 @@ Each check returns a clear status: **All Good**, **Worth Checking**, or **Needs 
 - Reverse DNS resolution for remote IPs
 - Color-coded by category (red for remote access, yellow for unknown)
 
+### Hardware Monitor
+- Live CPU and GPU temperatures, load, power consumption
+- Fan speed monitoring (detects stopped fans)
+- Storage health via S.M.A.R.T. (remaining life, total written)
+- Battery health and degradation tracking
+- Crypto miner detection (flags sustained high CPU+GPU load with high temps)
+- Trend charts showing temperature and load over 24 hours
+- All sensor raw data dump for power users
+- Powered by LibreHardwareMonitor (MIT)
+
 ### Periodic Scanning
 - Configurable scan interval (5 min to 2 hours)
 - Silent background scans — only alerts when things get worse
@@ -96,7 +107,7 @@ Each check returns a clear status: **All Good**, **Worth Checking**, or **Needs 
 ### Other
 - Dark theme throughout
 - Custom app icon
-- Keyboard shortcuts (Ctrl+S scan, Ctrl+E export, Ctrl+L activity, Ctrl+N network, F5 refresh)
+- Keyboard shortcuts (Ctrl+S scan, Ctrl+E export, Ctrl+L activity, Ctrl+N network, Ctrl+H Hardware, F5 refresh)
 - First-run onboarding wizard
 - System tray with minimize-to-tray
 - Sound cues (configurable)
@@ -133,11 +144,14 @@ PCGuardian.csproj          Project file (.NET 8, WinForms)
 Program.cs                 Entry point, single-instance mutex
 Models.cs                  Status, Finding, Category, Report records
 Theme.cs                   Colors, fonts, dark theme constants
-ScanEngine.cs              13 scan checks using native APIs (Registry, WMI, P/Invoke, ServiceController)
+ScanEngine.cs              14 scan checks using native APIs (Registry, WMI, P/Invoke, ServiceController)
 MainForm.cs                Main window — home dashboard, scan results, navigation
 SettingsForm.cs            Dedicated settings page
 ActivityForm.cs            Process history viewer (SQLite-backed)
 NetworkForm.cs             Live TCP connection monitor
+HardwareMonitor.cs         LHM wrapper — background sensor sampling, crypto miner detection
+HardwareForm.cs            Live hardware dashboard with trends and storage health
+BandwidthMonitor.cs        Per-process I/O rate tracking
 OnboardingForm.cs          First-run wizard
 Database.cs                SQLite schema, queries, process/scan history
 ProcessMonitor.cs          Background process start/stop tracking
@@ -168,6 +182,7 @@ build.bat                  One-click build script
 | System Access | Registry, WMI, P/Invoke (GetExtendedTcpTable), ServiceController |
 | PDF | Pure C# — System.Drawing + custom layout engine |
 | Networking | HttpListener (IT server), HttpClient (update checker) |
+| Sensors | LibreHardwareMonitor | CPU/GPU temp, fans, S.M.A.R.T., battery |
 
 ### Why These Choices
 
