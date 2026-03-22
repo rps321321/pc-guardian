@@ -127,7 +127,7 @@ internal sealed class MainForm : Form
             FlowDirection = FlowDirection.TopDown,
             WrapContents = false,
             BackColor = Theme.BgPrimary,
-            Padding = new(0, 20, 0, 20),
+            Padding = new(0, 12, 0, 4),
         };
 
         // Center homeInner inside viewIdle and resize on window change
