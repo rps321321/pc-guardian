@@ -50,13 +50,6 @@ static class Program
             }
         }
 
-        // Check for updates in background
-        _ = Task.Run(async () =>
-        {
-            try { await UpdateChecker.CheckAndNotify(null); }
-            catch { }
-        });
-
         bool minimized = args.Contains("--minimized");
         Application.Run(new MainForm(minimized));
     }

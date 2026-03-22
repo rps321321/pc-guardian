@@ -282,7 +282,7 @@ internal sealed class NetworkForm : Form
         e.Graphics.FillRectangle(bgBrush, e.Bounds);
 
         using var fgBrush = new SolidBrush(selected ? Theme.Accent : Theme.TextSecondary);
-        var sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
+        using var sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
         e.Graphics.DrawString(tab.Text, Theme.CardTitle, fgBrush, e.Bounds, sf);
     }
 

@@ -26,6 +26,7 @@ internal sealed class RealTimeMonitor : IDisposable
     private ManagementEventWatcher? _processWatcher;
     private ManagementEventWatcher? _usbWatcher;
     private System.Threading.Timer? _portTimer;
+    private readonly object _portsLock = new();
     private HashSet<int> _knownPorts = [];
     private volatile bool _running;
 
@@ -136,7 +137,11 @@ internal sealed class RealTimeMonitor : IDisposable
     {
         try
         {
-            _knownPorts = GetCurrentListeningPorts();
+            var initialPorts = GetCurrentListeningPorts();
+            lock (_portsLock)
+            {
+                _knownPorts = initialPorts;
+            }
             _portTimer = new System.Threading.Timer(
                 _ => CheckForNewPorts(), null, TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(60));
         }
@@ -153,7 +158,13 @@ internal sealed class RealTimeMonitor : IDisposable
         try
         {
             var current = GetCurrentListeningPorts();
-            var newPorts = current.Except(_knownPorts).ToList();
+            List<int> newPorts;
+
+            lock (_portsLock)
+            {
+                newPorts = current.Except(_knownPorts).ToList();
+                _knownPorts = current;
+            }
 
             foreach (var port in newPorts)
             {
@@ -162,8 +173,6 @@ internal sealed class RealTimeMonitor : IDisposable
                     $"Port {port} started listening on a non-localhost address",
                     AlertSeverity.Warning);
             }
-
-            _knownPorts = current;
         }
         catch (Exception ex)
         {

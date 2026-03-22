@@ -130,41 +130,44 @@ internal sealed class PerfService : IDisposable
 
     void EnumerateGpuCounters()
     {
-        // Dispose previous
-        if (_gpuCounters is not null)
+        lock (_lock)
         {
-            foreach (var c in _gpuCounters)
+            // Dispose previous
+            if (_gpuCounters is not null)
             {
-                try { c.Dispose(); } catch { }
+                foreach (var c in _gpuCounters)
+                {
+                    try { c.Dispose(); } catch { }
+                }
             }
-        }
 
-        var cat = new PerformanceCounterCategory("GPU Engine");
-        var instances = cat.GetInstanceNames();
+            var cat = new PerformanceCounterCategory("GPU Engine");
+            var instances = cat.GetInstanceNames();
 
-        var counters = new List<PerformanceCounter>();
-        var luids = new List<string>();
+            var counters = new List<PerformanceCounter>();
+            var luids = new List<string>();
 
-        foreach (var inst in instances)
-        {
-            var etMatch = EngTypeRegex.Match(inst);
-            if (!etMatch.Success || !string.Equals(etMatch.Groups[1].Value, "3D", StringComparison.OrdinalIgnoreCase))
-                continue;
-
-            var luidMatch = LuidRegex.Match(inst);
-            if (!luidMatch.Success) continue;
-
-            try
+            foreach (var inst in instances)
             {
-                var pc = new PerformanceCounter("GPU Engine", "Utilization Percentage", inst);
-                counters.Add(pc);
-                luids.Add(luidMatch.Groups[1].Value);
-            }
-            catch { }
-        }
+                var etMatch = EngTypeRegex.Match(inst);
+                if (!etMatch.Success || !string.Equals(etMatch.Groups[1].Value, "3D", StringComparison.OrdinalIgnoreCase))
+                    continue;
 
-        _gpuCounters = counters.ToArray();
-        _gpuLuids = luids.ToArray();
+                var luidMatch = LuidRegex.Match(inst);
+                if (!luidMatch.Success) continue;
+
+                try
+                {
+                    var pc = new PerformanceCounter("GPU Engine", "Utilization Percentage", inst);
+                    counters.Add(pc);
+                    luids.Add(luidMatch.Groups[1].Value);
+                }
+                catch { }
+            }
+
+            _gpuCounters = counters.ToArray();
+            _gpuLuids = luids.ToArray();
+        }
     }
 
     void InitDisk()
@@ -348,17 +351,30 @@ internal sealed class PerfService : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
-        _timer.Dispose();
 
-        _cpuCounter?.Dispose();
-        _diskRead?.Dispose();
-        _diskWrite?.Dispose();
+        // Wait for any in-flight Tick callback to finish before disposing counters
+        using var waitHandle = new ManualResetEvent(false);
+        _timer.Dispose(waitHandle);
+        waitHandle.WaitOne();
 
-        if (_gpuCounters is not null)
+        lock (_lock)
         {
-            foreach (var c in _gpuCounters)
+            _cpuCounter?.Dispose();
+            _cpuCounter = null;
+
+            _diskRead?.Dispose();
+            _diskRead = null;
+
+            _diskWrite?.Dispose();
+            _diskWrite = null;
+
+            if (_gpuCounters is not null)
             {
-                try { c.Dispose(); } catch { }
+                foreach (var c in _gpuCounters)
+                {
+                    try { c.Dispose(); } catch { }
+                }
+                _gpuCounters = null;
             }
         }
     }

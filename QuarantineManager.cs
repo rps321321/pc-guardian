@@ -132,6 +132,8 @@ internal static class QuarantineManager
 
         process.Start();
 
+        // Read stderr asynchronously to avoid deadlock
+        _ = process.StandardError.ReadToEndAsync();
         string output = process.StandardOutput.ReadToEnd();
 
         if (!process.WaitForExit(NetshTimeoutMs))

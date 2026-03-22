@@ -247,8 +247,9 @@ internal static class FixActions
                 CreateNoWindow = true,
             };
             proc.Start();
+            // Read stderr asynchronously to avoid deadlock
+            _ = proc.StandardError.ReadToEndAsync();
             var output = proc.StandardOutput.ReadToEnd();
-            proc.StandardError.ReadToEnd();
             proc.WaitForExit(15_000);
             return output;
         }

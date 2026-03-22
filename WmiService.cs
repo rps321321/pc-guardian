@@ -490,6 +490,10 @@ internal sealed class WmiService : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
-        _timer.Dispose();
+
+        // Wait for any in-flight OnTick callback to finish
+        using var waitHandle = new ManualResetEvent(false);
+        _timer.Dispose(waitHandle);
+        waitHandle.WaitOne();
     }
 }

@@ -615,18 +615,8 @@ internal sealed class CpuGpuForm : Form
                 (r => r.GpuLoad, Theme.Warning, "GPU%"),
             ]);
 
-        // Chart 2: RAM%
+        // Chart 2: Battery Level
         int chart2Top = topPad + chartH + 20;
-        DrawChart(g, data, leftPad, chart2Top, w - leftPad - rightPad, chartH,
-            "RAM Usage",
-            [
-                (r => r.BatteryLevel is not null ? null : null, Color.Empty, ""), // placeholder
-            ]);
-
-        // Redraw chart 2 properly with battery_level mapped as RAM% (from hw_metrics)
-        // Actually battery_level stores RAM% in some schemas — but we don't have a dedicated ram_pct column.
-        // Use cpu_load's table: no dedicated RAM column, so skip RAM chart if no data.
-        // Let's use a different approach: just show CPU + GPU in chart 1, and battery_level + battery_health in chart 2.
         DrawChart(g, data, leftPad, chart2Top, w - leftPad - rightPad, chartH,
             "Battery Level",
             [
@@ -825,7 +815,7 @@ internal sealed class CpuGpuForm : Form
         e.Graphics.FillRectangle(bgBrush, e.Bounds);
 
         using var fgBrush = new SolidBrush(selected ? Theme.Accent : Theme.TextSecondary);
-        var sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
+        using var sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
         e.Graphics.DrawString(tab.Text, Theme.CardTitle, fgBrush, e.Bounds, sf);
     }
 

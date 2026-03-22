@@ -13,7 +13,7 @@ internal sealed class ITServer : IDisposable
     HttpListener? _listener;
     Thread? _thread;
     volatile bool _running;
-    Report? _latestReport;
+    volatile Report? _latestReport;
     string? _pin;
     int _port;
 

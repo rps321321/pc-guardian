@@ -205,8 +205,10 @@ internal sealed class Database : IDisposable
         using var cmd = db.CreateCommand();
         cmd.CommandText = """
             UPDATE sessions SET ended = @t, peak_memory_mb = @mem
-            WHERE pid = @pid AND ended IS NULL
-            ORDER BY started DESC LIMIT 1;
+            WHERE id = (
+                SELECT id FROM sessions WHERE pid = @pid AND ended IS NULL
+                ORDER BY started DESC LIMIT 1
+            );
             """;
         cmd.Parameters.AddWithValue("@pid", pid);
         cmd.Parameters.AddWithValue("@t", endTime.ToUniversalTime().ToString("o"));
@@ -239,7 +241,7 @@ internal sealed class Database : IDisposable
     {
         using var db = Open();
         using var cmd = db.CreateCommand();
-        cmd.CommandText = $"""
+        cmd.CommandText = """
             SELECT ts, event_type, name, path, pid, peak_memory_mb FROM (
                 SELECT s.started AS ts, 'start' AS event_type, p.name, p.path, s.pid, NULL AS peak_memory_mb
                 FROM sessions s JOIN programs p ON s.program_id = p.id
@@ -247,8 +249,9 @@ internal sealed class Database : IDisposable
                 SELECT s.ended AS ts, 'end' AS event_type, p.name, p.path, s.pid, s.peak_memory_mb
                 FROM sessions s JOIN programs p ON s.program_id = p.id
                 WHERE s.ended IS NOT NULL
-            ) ORDER BY ts DESC LIMIT {limit};
+            ) ORDER BY ts DESC LIMIT @limit;
             """;
+        cmd.Parameters.AddWithValue("@limit", limit);
         using var r = cmd.ExecuteReader();
         var list = new List<TimelineEvent>();
         while (r.Read())
@@ -283,7 +286,8 @@ internal sealed class Database : IDisposable
     {
         using var db = Open();
         using var cmd = db.CreateCommand();
-        cmd.CommandText = $"SELECT id, timestamp, overall, safe_count, warning_count, danger_count, details_json FROM scan_history ORDER BY timestamp DESC LIMIT {limit};";
+        cmd.CommandText = "SELECT id, timestamp, overall, safe_count, warning_count, danger_count, details_json FROM scan_history ORDER BY timestamp DESC LIMIT @limit;";
+        cmd.Parameters.AddWithValue("@limit", limit);
         using var r = cmd.ExecuteReader();
         var list = new List<ScanHistoryRow>();
         while (r.Read())
@@ -383,7 +387,7 @@ internal sealed class Database : IDisposable
     {
         using var db = Open();
         using var cmd = db.CreateCommand();
-        cmd.CommandText = $"""
+        cmd.CommandText = """
             SELECT ts, event_type, name, category, pid, peak_memory_mb FROM (
                 SELECT s.started AS ts, 'START' AS event_type, p.name, p.category, s.pid, s.peak_memory_mb
                 FROM sessions s JOIN programs p ON s.program_id = p.id
@@ -391,8 +395,9 @@ internal sealed class Database : IDisposable
                 SELECT s.ended AS ts, 'END' AS event_type, p.name, p.category, s.pid, s.peak_memory_mb
                 FROM sessions s JOIN programs p ON s.program_id = p.id
                 WHERE s.ended IS NOT NULL
-            ) ORDER BY ts DESC LIMIT {limit};
+            ) ORDER BY ts DESC LIMIT @limit;
             """;
+        cmd.Parameters.AddWithValue("@limit", limit);
         using var r = cmd.ExecuteReader();
         var list = new List<string[]>();
         while (r.Read())
@@ -428,7 +433,8 @@ internal sealed class Database : IDisposable
     {
         using var db = Open();
         using var cmd = db.CreateCommand();
-        cmd.CommandText = $"SELECT timestamp, overall, safe_count, warning_count, danger_count FROM scan_history ORDER BY timestamp DESC LIMIT {limit};";
+        cmd.CommandText = "SELECT timestamp, overall, safe_count, warning_count, danger_count FROM scan_history ORDER BY timestamp DESC LIMIT @limit;";
+        cmd.Parameters.AddWithValue("@limit", limit);
         using var r = cmd.ExecuteReader();
         var list = new List<string[]>();
         while (r.Read())

@@ -36,10 +36,10 @@ internal sealed class EventScanner
         var findings = new List<Finding>();
         var since = DateTime.UtcNow.AddDays(-daysBack);
 
-        List<EventRecord> events;
+        List<(DateTime Time, int Id, string[] Props)> events;
         try
         {
-            events = QueryLog("Security", 4625, since);
+            events = QueryLog("Security", 4625, since, propIndices: [5]);
         }
         catch (UnauthorizedAccessException)
         {
@@ -62,7 +62,7 @@ internal sealed class EventScanner
         var byUser = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         foreach (var evt in events)
         {
-            var username = GetProperty(evt, 5) ?? "(unknown)";
+            var username = evt.Props[0] ?? "(unknown)";
             byUser[username] = byUser.GetValueOrDefault(username) + 1;
         }
 
@@ -98,10 +98,10 @@ internal sealed class EventScanner
         var findings = new List<Finding>();
         var since = DateTime.UtcNow.AddDays(-daysBack);
 
-        List<EventRecord> events;
+        List<(DateTime Time, int Id, string[] Props)> events;
         try
         {
-            events = QueryLog("Security", 4740, since);
+            events = QueryLog("Security", 4740, since, propIndices: [0, 4]);
         }
         catch (UnauthorizedAccessException)
         {
@@ -128,8 +128,8 @@ internal sealed class EventScanner
 
         foreach (var evt in events)
         {
-            var account = GetProperty(evt, 0) ?? "(unknown)";
-            var caller = GetProperty(evt, 4) ?? "(unknown)";
+            var account = evt.Props[0] ?? "(unknown)";
+            var caller = evt.Props[1] ?? "(unknown)";
             findings.Add(new Finding(
                 "Locked Account",
                 $"{account} locked out (caller: {caller})",
@@ -184,8 +184,8 @@ internal sealed class EventScanner
         var findings = new List<Finding>();
         var since = DateTime.UtcNow.AddDays(-daysBack);
 
-        var errors = QueryLog("Application", 1000, since);
-        var hangs = QueryLog("Application", 1002, since);
+        var errors = QueryLog("Application", 1000, since, propIndices: [0]);
+        var hangs = QueryLog("Application", 1002, since, propIndices: [0]);
 
         var all = errors.Concat(hangs).ToList();
 
@@ -201,7 +201,7 @@ internal sealed class EventScanner
         var byApp = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         foreach (var evt in all)
         {
-            var appName = GetProperty(evt, 0) ?? "(unknown)";
+            var appName = evt.Props[0] ?? "(unknown)";
             byApp[appName] = byApp.GetValueOrDefault(appName) + 1;
         }
 
@@ -299,8 +299,8 @@ internal sealed class EventScanner
         const string logName =
             "Microsoft-Windows-NetworkProfile/Operational";
 
-        var connects = QueryLog(logName, 10000, since);
-        var disconnects = QueryLog(logName, 10001, since);
+        var connects = QueryLog(logName, 10000, since, propIndices: [0]);
+        var disconnects = QueryLog(logName, 10001, since, propIndices: [0]);
 
         if (connects.Count == 0 && disconnects.Count == 0)
         {
@@ -316,14 +316,14 @@ internal sealed class EventScanner
 
         foreach (var evt in connects)
         {
-            var name = GetProperty(evt, 0) ?? "(unknown)";
+            var name = evt.Props[0] ?? "(unknown)";
             var cur = networks.GetValueOrDefault(name);
             networks[name] = (cur.Connected + 1, cur.Disconnected);
         }
 
         foreach (var evt in disconnects)
         {
-            var name = GetProperty(evt, 0) ?? "(unknown)";
+            var name = evt.Props[0] ?? "(unknown)";
             var cur = networks.GetValueOrDefault(name);
             networks[name] = (cur.Connected, cur.Disconnected + 1);
         }
@@ -349,9 +349,9 @@ internal sealed class EventScanner
     // Helpers
     // -------------------------------------------------------------------
 
-    static List<EventRecord> QueryLog(
+    static List<(DateTime Time, int Id, string[] Props)> QueryLog(
         string logName, int eventId, DateTime since,
-        string? providerName = null)
+        string? providerName = null, int[]? propIndices = null)
     {
         var timeFilter = since.ToString("yyyy-MM-ddTHH:mm:ss.fffZ");
 
@@ -367,7 +367,7 @@ internal sealed class EventScanner
             ReverseDirection = true
         };
 
-        var records = new List<EventRecord>();
+        var results = new List<(DateTime Time, int Id, string[] Props)>();
 
         try
         {
@@ -375,8 +375,15 @@ internal sealed class EventScanner
 
             while (reader.ReadEvent() is { } record)
             {
-                records.Add(record);
-                if (records.Count >= MaxRecords) break;
+                using (record)
+                {
+                    var time = record.TimeCreated ?? DateTime.MinValue;
+                    var id = record.Id;
+                    var props = ExtractProperties(record, propIndices);
+                    results.Add((time, id, props));
+                }
+
+                if (results.Count >= MaxRecords) break;
             }
         }
         catch (EventLogNotFoundException)
@@ -388,22 +395,33 @@ internal sealed class EventScanner
             // Corrupted or inaccessible log — return what we have.
         }
 
-        return records;
+        return results;
     }
 
-    static string? GetProperty(EventRecord evt, int index)
+    static string[] ExtractProperties(EventRecord record, int[]? indices)
     {
+        if (indices is null || indices.Length == 0)
+            return [];
+
+        var props = new string[indices.Length];
         try
         {
-            var props = ((EventLogRecord)evt).Properties;
-            if (index < props.Count)
-                return props[index].Value?.ToString();
+            var evtProps = ((EventLogRecord)record).Properties;
+            for (int i = 0; i < indices.Length; i++)
+            {
+                int idx = indices[i];
+                props[i] = idx < evtProps.Count
+                    ? evtProps[idx].Value?.ToString() ?? "(unknown)"
+                    : "(unknown)";
+            }
         }
         catch
         {
-            // Property extraction failed — return null.
+            // Property extraction failed — fill with unknowns.
+            for (int i = 0; i < props.Length; i++)
+                props[i] ??= "(unknown)";
         }
 
-        return null;
+        return props;
     }
 }

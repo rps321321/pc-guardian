@@ -258,8 +258,13 @@ internal sealed class BandwidthMonitor : IDisposable
 
     public void Dispose()
     {
+        if (_disposed) return;
         _disposed = true;
-        _timer.Dispose();
+
+        // Wait for any in-flight Tick callback to finish
+        using var waitHandle = new ManualResetEvent(false);
+        _timer.Dispose(waitHandle);
+        waitHandle.WaitOne();
     }
 }
 

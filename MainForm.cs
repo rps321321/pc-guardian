@@ -102,6 +102,9 @@ internal sealed class MainForm : Form
         SetupTimers();
         ShowView("idle");
 
+        // Check for updates in background (tray is now available)
+        _ = Task.Run(async () => { try { await UpdateChecker.CheckAndNotify(tray); } catch { } });
+
         if (startMinimized)
         {
             WindowState = FormWindowState.Minimized;
@@ -847,8 +850,6 @@ internal sealed class MainForm : Form
                 break;
             case "enable-firewall":
                 action = "Enable Windows Firewall";
-                result = FixActions.StopService(""); // placeholder — needs netsh
-                // Use netsh to enable firewall
                 try
                 {
                     var psi = new System.Diagnostics.ProcessStartInfo("netsh", "advfirewall set allprofiles state on")

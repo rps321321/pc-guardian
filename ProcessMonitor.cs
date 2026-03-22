@@ -13,6 +13,7 @@ internal sealed class ProcessMonitor : IDisposable
 {
     private readonly Database _db;
     private readonly System.Threading.Timer _timer;
+    private readonly object _snapshotLock = new();
     private Dictionary<int, ProcessInfo> _lastSnapshot = new();
 
     public ProcessMonitor(Database db)
@@ -20,7 +21,11 @@ internal sealed class ProcessMonitor : IDisposable
         _db = db;
 
         // First tick: seed the snapshot without logging start events.
-        _lastSnapshot = TakeSnapshot();
+        var initial = TakeSnapshot();
+        lock (_snapshotLock)
+        {
+            _lastSnapshot = initial;
+        }
 
         // Fire every 30 seconds; no initial delay (first real diff after 30s).
         _timer = new System.Threading.Timer(_ => Tick(), null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
@@ -86,10 +91,16 @@ internal sealed class ProcessMonitor : IDisposable
             var current = TakeSnapshot();
             var now = DateTime.UtcNow;
 
+            Dictionary<int, ProcessInfo> previous;
+            lock (_snapshotLock)
+            {
+                previous = _lastSnapshot;
+            }
+
             // Detect new processes (PIDs in current but not in last).
             foreach (var (pid, info) in current)
             {
-                if (!_lastSnapshot.ContainsKey(pid))
+                if (!previous.ContainsKey(pid))
                 {
                     _db.UpsertProgram(info.Name, info.Path, info.Company, info.Category);
                     _db.StartSession(info.Name, pid, now, info.MemoryMB);
@@ -97,7 +108,7 @@ internal sealed class ProcessMonitor : IDisposable
             }
 
             // Detect stopped processes (PIDs in last but not in current).
-            foreach (var (pid, info) in _lastSnapshot)
+            foreach (var (pid, info) in previous)
             {
                 if (!current.ContainsKey(pid))
                 {
@@ -105,7 +116,10 @@ internal sealed class ProcessMonitor : IDisposable
                 }
             }
 
-            _lastSnapshot = current;
+            lock (_snapshotLock)
+            {
+                _lastSnapshot = current;
+            }
         }
         catch (Exception ex)
         {

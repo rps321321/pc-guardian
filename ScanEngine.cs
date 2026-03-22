@@ -113,9 +113,9 @@ internal static class ScanEngine
             };
             proc.Start();
 
-            // Read stdout/stderr to avoid deadlock
+            // Read stderr asynchronously to avoid deadlock
+            _ = proc.StandardError.ReadToEndAsync();
             var output = proc.StandardOutput.ReadToEnd();
-            proc.StandardError.ReadToEnd();
 
             if (!proc.WaitForExit(20_000))
             {
