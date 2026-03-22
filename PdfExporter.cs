@@ -11,7 +11,7 @@ internal static class PdfExporter
         QuestPDF.Settings.License = LicenseType.Community;
     }
 
-    public static bool SaveAsPdf(Report report, string pdfPath)
+    public static bool SaveAsPdf(Report report, string pdfPath, SystemMonitor? monitor = null)
     {
         try
         {
@@ -23,7 +23,7 @@ internal static class PdfExporter
                     page.Margin(36);
                     page.DefaultTextStyle(x => x.FontSize(9).FontFamily("Segoe UI"));
 
-                    page.Header().Element(c => DrawHeader(c, report));
+                    page.Header().Element(c => DrawHeader(c, report, monitor));
                     page.Content().Element(c => DrawContent(c, report));
                     page.Footer().Element(DrawFooter);
                 });
@@ -34,7 +34,7 @@ internal static class PdfExporter
         catch { return false; }
     }
 
-    static void DrawHeader(IContainer container, Report report)
+    static void DrawHeader(IContainer container, Report report, SystemMonitor? monitor = null)
     {
         var (statusText, statusHex) = report.Overall switch
         {
@@ -55,6 +55,55 @@ internal static class PdfExporter
                     text.Span(report.Timestamp.ToString("MMM d, yyyy h:mm tt")).FontSize(9).FontColor(Colors.Grey.Medium);
                 });
             });
+
+            // System info section (when monitor is available)
+            if (monitor is not null)
+            {
+                try
+                {
+                    var info = monitor.GetSystemInfo() as SystemStaticInfo;
+                    if (info is not null)
+                    {
+                        double ramGb = info.TotalRamBytes / (1024.0 * 1024 * 1024);
+                        col.Item().PaddingTop(8).PaddingBottom(4)
+                            .Background("#f8fafc").Border(0.5f).BorderColor("#e2e8f0").Padding(8)
+                            .Column(sysCol =>
+                            {
+                                sysCol.Item().Text("System Information").FontSize(9).SemiBold().FontColor("#475569");
+                                sysCol.Item().PaddingTop(4).Row(sysRow =>
+                                {
+                                    sysRow.RelativeItem().Column(left =>
+                                    {
+                                        left.Item().Text(text =>
+                                        {
+                                            text.Span("CPU: ").FontSize(8).SemiBold().FontColor("#64748b");
+                                            text.Span(info.CpuName).FontSize(8).FontColor("#334155");
+                                        });
+                                        left.Item().Text(text =>
+                                        {
+                                            text.Span("RAM: ").FontSize(8).SemiBold().FontColor("#64748b");
+                                            text.Span($"{ramGb:F1} GB").FontSize(8).FontColor("#334155");
+                                        });
+                                    });
+                                    sysRow.RelativeItem().Column(right =>
+                                    {
+                                        right.Item().Text(text =>
+                                        {
+                                            text.Span("OS: ").FontSize(8).SemiBold().FontColor("#64748b");
+                                            text.Span(info.OsCaption).FontSize(8).FontColor("#334155");
+                                        });
+                                        right.Item().Text(text =>
+                                        {
+                                            text.Span("GPU: ").FontSize(8).SemiBold().FontColor("#64748b");
+                                            text.Span(string.IsNullOrWhiteSpace(info.GpuName) ? "N/A" : info.GpuName).FontSize(8).FontColor("#334155");
+                                        });
+                                    });
+                                });
+                            });
+                    }
+                }
+                catch { /* monitor may not have info yet — skip gracefully */ }
+            }
 
             col.Item().PaddingTop(10).PaddingBottom(6)
                 .BorderLeft(3).BorderColor(statusHex).PaddingLeft(10)

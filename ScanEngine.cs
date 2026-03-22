@@ -845,7 +845,7 @@ internal static class ScanEngine
     // 14. Hardware Health
     // -----------------------------------------------------------------------
 
-    static Category CheckHardwareHealth(HardwareMonitor? hw)
+    static Category CheckHardwareHealth(SystemMonitor? hw)
     {
         var findings = new List<Finding>();
 
@@ -963,10 +963,134 @@ internal static class ScanEngine
     }
 
     // -----------------------------------------------------------------------
+    // 15. Security Posture
+    // -----------------------------------------------------------------------
+
+    static Category CheckSecurityPosture(SystemMonitor? monitor)
+    {
+        var findings = new List<Finding>();
+
+        if (monitor is null)
+        {
+            findings.Add(new("Security posture", "Security posture check not available", Status.Safe));
+            return new("security-posture", "\uD83D\uDD12", "Device Security",
+                "Is your device properly secured?", Status.Safe,
+                "Security posture check not available", findings,
+                "Provide a SystemMonitor instance for security posture analysis.");
+        }
+
+        var posture = (SecurityPosture)monitor.GetSecurityPosture();
+
+        // BitLocker
+        if (posture.BitLockerEnabled is null)
+            findings.Add(new("BitLocker Encryption", "Run as admin to check", Status.Safe));
+        else if (!posture.BitLockerEnabled.Value)
+            findings.Add(new("BitLocker Encryption", "Drive not encrypted", Status.Danger));
+        else
+            findings.Add(new("BitLocker Encryption", "Drive is encrypted", Status.Safe));
+
+        // Secure Boot
+        findings.Add(new("Secure Boot",
+            posture.SecureBootEnabled == true ? "Enabled" : "Disabled",
+            posture.SecureBootEnabled == true ? Status.Safe : Status.Danger));
+
+        // TPM
+        if (posture.TpmPresent is null)
+            findings.Add(new("TPM", "Run as admin to check", Status.Safe));
+        else if (!posture.TpmPresent.Value)
+            findings.Add(new("TPM", "No TPM detected", Status.Warning));
+        else
+            findings.Add(new("TPM",
+                $"Present (version {posture.TpmVersion ?? "unknown"})", Status.Safe));
+
+        // UAC
+        if (!posture.UacEnabled)
+            findings.Add(new("User Account Control", "Disabled \u2014 dangerous!", Status.Danger));
+        else if (posture.UacConsentLevel < 3)
+            findings.Add(new("User Account Control", $"Consent level {posture.UacConsentLevel} \u2014 too permissive", Status.Warning));
+        else
+            findings.Add(new("User Account Control", "Enabled and properly configured", Status.Safe));
+
+        // Auto-Login
+        if (posture.AutoLoginEnabled)
+            findings.Add(new("Auto-Login", "Enabled \u2014 anyone can access this PC!", Status.Danger));
+        if (posture.AutoLoginPasswordStored)
+            findings.Add(new("Auto-Login Password", "Password stored in registry", Status.Danger));
+
+        // Password Policy
+        if (posture.PasswordMinLength == 0)
+            findings.Add(new("Password Policy", "No minimum password length!", Status.Danger));
+        else if (posture.PasswordMinLength < 8)
+            findings.Add(new("Password Policy", $"Minimum length {posture.PasswordMinLength} \u2014 too short", Status.Warning));
+        else
+            findings.Add(new("Password Policy", $"Minimum length {posture.PasswordMinLength}", Status.Safe));
+
+        if (posture.LockoutThreshold == 0)
+            findings.Add(new("Account Lockout", "No lockout after failed attempts", Status.Warning));
+
+        // Guest Account
+        if (posture.GuestAccountEnabled == true)
+            findings.Add(new("Guest Account", "Enabled \u2014 anyone can log in", Status.Danger));
+        else if (posture.GuestAccountEnabled == false)
+            findings.Add(new("Guest Account", "Disabled", Status.Safe));
+
+        // Screen Lock
+        if (posture.ScreenLockTimeoutSec is null)
+            findings.Add(new("Screen Lock", "No screensaver configured", Status.Danger));
+        else if (posture.ScreenLockTimeoutSec > 900)
+            findings.Add(new("Screen Lock", $"Timeout {posture.ScreenLockTimeoutSec}s \u2014 too long", Status.Warning));
+        else if (posture.ScreenLockRequiresPassword)
+            findings.Add(new("Screen Lock", $"Locks after {posture.ScreenLockTimeoutSec}s with password", Status.Safe));
+
+        // Pending Updates
+        if (posture.RebootPending)
+            findings.Add(new("Pending Updates", "System reboot required for updates", Status.Warning));
+
+        var status = Worst(findings.Select(f => f.Status));
+        return new("security-posture", "\uD83D\uDD12", "Device Security",
+            "Is your device properly secured?", status,
+            status == Status.Danger ? "Security issues detected!"
+            : status == Status.Warning ? "Some security settings need attention"
+            : "Device security looks good",
+            findings,
+            status == Status.Danger
+                ? "Address critical security issues: enable BitLocker, UAC, and disable auto-login."
+                : status == Status.Warning
+                ? "Review security settings and tighten where possible."
+                : "Your device security configuration is solid.");
+    }
+
+    // -----------------------------------------------------------------------
+    // 16. Security Events
+    // -----------------------------------------------------------------------
+
+    static Category CheckSecurityEvents(SystemMonitor? monitor)
+    {
+        var scanner = new EventScanner();
+        var findings = scanner.GetAllFindings();
+
+        if (findings.Count == 0)
+            findings.Add(new("Security Events", "No notable events found", Status.Safe));
+
+        var status = Worst(findings.Select(f => f.Status));
+        return new("security-events", "\uD83D\uDCCB", "Security Events",
+            "Any signs of unauthorized access?", status,
+            status == Status.Danger ? "Suspicious security events detected!"
+            : status == Status.Warning ? "Some events need review"
+            : "No suspicious events found",
+            findings,
+            status == Status.Danger
+                ? "Investigate flagged security events immediately."
+                : status == Status.Warning
+                ? "Review warning events and ensure they are expected."
+                : "Security event logs look clean.");
+    }
+
+    // -----------------------------------------------------------------------
     // Full scan — each check is wrapped so one failure doesn't kill the scan
     // -----------------------------------------------------------------------
 
-    public static Report RunFullScan(HardwareMonitor? hw = null)
+    public static Report RunFullScan(SystemMonitor? monitor = null)
     {
         var categories = new List<Category>();
 
@@ -985,7 +1109,9 @@ internal static class ScanEngine
             ("antivirus", "\uD83E\uDDA0", "Antivirus & Updates", CheckAntivirusStatus),
             ("dns", "\uD83D\uDD0D", "DNS Settings", CheckDnsSettings),
             ("usb", "\uD83D\uDD0C", "USB Devices", CheckUsbDevices),
-            ("hardware", "\uD83C\uDF21\uFE0F", "Hardware Health", () => CheckHardwareHealth(hw)),
+            ("hardware", "\uD83C\uDF21\uFE0F", "Hardware Health", () => CheckHardwareHealth(monitor)),
+            ("security-posture", "\uD83D\uDD12", "Device Security", () => CheckSecurityPosture(monitor)),
+            ("security-events", "\uD83D\uDCCB", "Security Events", () => CheckSecurityEvents(monitor)),
         };
 
         foreach (var (id, icon, title, fn) in checks)

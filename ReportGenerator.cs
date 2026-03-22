@@ -5,7 +5,7 @@ namespace PCGuardian;
 
 internal static class ReportGenerator
 {
-    public static string ToHtml(Report report)
+    public static string ToHtml(Report report, SystemMonitor? monitor = null)
     {
         var sb = new StringBuilder();
         var host = Environment.MachineName;
@@ -40,6 +40,28 @@ internal static class ReportGenerator
         if (report.WarningCount > 0) sb.Append($" &middot; {report.WarningCount} to review");
         if (report.DangerCount > 0) sb.Append($" &middot; {report.DangerCount} need attention");
         sb.AppendLine("</div></div>");
+
+        // System Information (optional)
+        if (monitor is not null)
+        {
+            try
+            {
+                var sysInfo = monitor.GetSystemInfo() as SystemStaticInfo;
+                if (sysInfo is not null)
+                {
+                    var ramGb = Math.Round(sysInfo.TotalRamBytes / (1024.0 * 1024 * 1024), 1);
+                    sb.AppendLine("<div class=\"system-info\">");
+                    sb.AppendLine("<h3 style=\"font-size:14px;font-weight:600;margin-bottom:6px\">System Information</h3>");
+                    sb.AppendLine($"<p style=\"font-size:13px;color:#555;margin:0\">"
+                        + $"CPU: {WebUtility.HtmlEncode(sysInfo.CpuName)} &middot; "
+                        + $"RAM: {ramGb} GB &middot; "
+                        + $"OS: {WebUtility.HtmlEncode(sysInfo.OsCaption)} &middot; "
+                        + $"GPU: {WebUtility.HtmlEncode(sysInfo.GpuName)}</p>");
+                    sb.AppendLine("</div>");
+                }
+            }
+            catch { /* monitor unavailable — skip section */ }
+        }
 
         // Categories
         foreach (var cat in report.Categories)
@@ -91,9 +113,9 @@ internal static class ReportGenerator
         return sb.ToString();
     }
 
-    public static void SaveToFile(Report report, string path)
+    public static void SaveToFile(Report report, string path, SystemMonitor? monitor = null)
     {
-        File.WriteAllText(path, ToHtml(report), Encoding.UTF8);
+        File.WriteAllText(path, ToHtml(report, monitor), Encoding.UTF8);
     }
 
     const string CSS = """
@@ -111,6 +133,10 @@ internal static class ReportGenerator
         }
         .status-title { font-size: 18px; font-weight: 600; }
         .status-stats { font-size: 13px; color: #555; margin-top: 4px; }
+        .system-info {
+            background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px;
+            padding: 14px 20px; margin-bottom: 24px;
+        }
         .card {
             display: flex; border: 1px solid #e5e5e5; border-radius: 10px;
             overflow: hidden; margin-bottom: 12px; background: #fff;

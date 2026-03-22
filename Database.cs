@@ -27,6 +27,10 @@ internal sealed record HardwareMetricRow(
     double? CpuPower, double? BatteryLevel, double? BatteryHealth,
     string? TopProcesses);
 
+internal sealed record SecurityEventRow(int Id, string Timestamp, string Source, string EventType, string Severity, string? Detail, string? RawData);
+
+internal sealed record DiskSpaceRow(int Id, string Timestamp, string Drive, double TotalGb, double FreeGb);
+
 internal sealed class Database : IDisposable
 {
     private readonly string _connStr;
@@ -109,10 +113,30 @@ internal sealed class Database : IDisposable
                 top_processes  TEXT
             );
 
+            CREATE TABLE IF NOT EXISTS security_events (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp  TEXT NOT NULL,
+                source     TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                severity   TEXT NOT NULL,
+                detail     TEXT,
+                raw_data   TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS disk_space_log (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp  TEXT NOT NULL,
+                drive      TEXT NOT NULL,
+                total_gb   REAL,
+                free_gb    REAL
+            );
+
             CREATE INDEX IF NOT EXISTS idx_sessions_pid_ended ON sessions(pid, ended);
             CREATE INDEX IF NOT EXISTS idx_sessions_started ON sessions(started);
             CREATE INDEX IF NOT EXISTS idx_scan_history_ts ON scan_history(timestamp);
             CREATE INDEX IF NOT EXISTS idx_hw_ts ON hardware_metrics(timestamp);
+            CREATE INDEX IF NOT EXISTS idx_secevt_ts ON security_events(timestamp);
+            CREATE INDEX IF NOT EXISTS idx_diskspace_ts ON disk_space_log(timestamp);
             """;
         cmd.ExecuteNonQuery();
     }
@@ -468,6 +492,75 @@ internal sealed class Database : IDisposable
         return GetHardwareHistory(hours);
     }
 
+    // ── Security Events ────────────────────────────────────────────
+
+    public void LogSecurityEvent(DateTime timestamp, string source, string eventType,
+        string severity, string? detail, string? rawData)
+    {
+        using var db = Open();
+        using var cmd = db.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO security_events (timestamp, source, event_type, severity, detail, raw_data)
+            VALUES (@ts, @src, @et, @sev, @det, @raw);
+            """;
+        cmd.Parameters.AddWithValue("@ts", timestamp.ToUniversalTime().ToString("o"));
+        cmd.Parameters.AddWithValue("@src", source);
+        cmd.Parameters.AddWithValue("@et", eventType);
+        cmd.Parameters.AddWithValue("@sev", severity);
+        cmd.Parameters.AddWithValue("@det", (object?)detail ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@raw", (object?)rawData ?? DBNull.Value);
+        cmd.ExecuteNonQuery();
+    }
+
+    public List<SecurityEventRow> GetSecurityEvents(int hours = 24)
+    {
+        using var db = Open();
+        using var cmd = db.CreateCommand();
+        cmd.CommandText = "SELECT id, timestamp, source, event_type, severity, detail, raw_data FROM security_events WHERE timestamp > datetime('now', '-' || @hours || ' hours') ORDER BY timestamp DESC;";
+        cmd.Parameters.AddWithValue("@hours", hours);
+        using var r = cmd.ExecuteReader();
+        var list = new List<SecurityEventRow>();
+        while (r.Read())
+            list.Add(new SecurityEventRow(
+                r.GetInt32(0), r.GetString(1), r.GetString(2),
+                r.GetString(3), r.GetString(4),
+                r.IsDBNull(5) ? null : r.GetString(5),
+                r.IsDBNull(6) ? null : r.GetString(6)));
+        return list;
+    }
+
+    // ── Disk Space ──────────────────────────────────────────────────
+
+    public void LogDiskSpace(DateTime timestamp, string drive, double totalGb, double freeGb)
+    {
+        using var db = Open();
+        using var cmd = db.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO disk_space_log (timestamp, drive, total_gb, free_gb)
+            VALUES (@ts, @drv, @total, @free);
+            """;
+        cmd.Parameters.AddWithValue("@ts", timestamp.ToUniversalTime().ToString("o"));
+        cmd.Parameters.AddWithValue("@drv", drive);
+        cmd.Parameters.AddWithValue("@total", totalGb);
+        cmd.Parameters.AddWithValue("@free", freeGb);
+        cmd.ExecuteNonQuery();
+    }
+
+    public List<DiskSpaceRow> GetDiskSpaceHistory(int hours = 168)
+    {
+        using var db = Open();
+        using var cmd = db.CreateCommand();
+        cmd.CommandText = "SELECT id, timestamp, drive, total_gb, free_gb FROM disk_space_log WHERE timestamp > datetime('now', '-' || @hours || ' hours') ORDER BY timestamp DESC;";
+        cmd.Parameters.AddWithValue("@hours", hours);
+        using var r = cmd.ExecuteReader();
+        var list = new List<DiskSpaceRow>();
+        while (r.Read())
+            list.Add(new DiskSpaceRow(
+                r.GetInt32(0), r.GetString(1), r.GetString(2),
+                r.GetDouble(3), r.GetDouble(4)));
+        return list;
+    }
+
     // ── Maintenance ─────────────────────────────────────────────────
 
     /// <summary>User-triggered only. Deletes all logged data and reclaims space.</summary>
@@ -481,6 +574,8 @@ internal sealed class Database : IDisposable
             DELETE FROM scan_history;
             DELETE FROM connections_log;
             DELETE FROM hardware_metrics;
+            DELETE FROM security_events;
+            DELETE FROM disk_space_log;
             """;
         cmd.ExecuteNonQuery();
 

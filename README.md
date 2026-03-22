@@ -12,7 +12,7 @@ Designed so anyone can use it, even if they've never touched a terminal.
 
 ## What It Does
 
-PC Guardian runs **14 security checks** using native Windows APIs — no PowerShell scripts, no cloud, no telemetry. Everything stays on your machine.
+PC Guardian runs **16 security checks** using native Windows APIs — no PowerShell scripts, no cloud, no telemetry. Everything stays on your machine.
 
 | Check | What It Looks For |
 |-------|-------------------|
@@ -30,6 +30,8 @@ PC Guardian runs **14 security checks** using native Windows APIs — no PowerSh
 | DNS Settings | Check for DNS hijacking |
 | USB Devices | Recently connected USB devices |
 | Hardware Health | CPU/GPU temps, fan speeds, storage S.M.A.R.T., battery, crypto miner detection |
+| Device Security | BitLocker, Secure Boot, TPM, UAC, auto-login, guest account, screen lock, pending updates |
+| Security Events | Failed logins, BSODs, app crashes, unexpected shutdowns, network changes |
 
 Each check returns a clear status: **All Good**, **Worth Checking**, or **Needs Attention** — with plain-English explanations and tips on what to do.
 
@@ -38,7 +40,7 @@ Each check returns a clear status: **All Good**, **Worth Checking**, or **Needs 
 ## Features
 
 ### Security Scanner
-- 14 scan categories covering remote access, network, system services, and more
+- 16 scan categories covering remote access, network, system services, and more
 - One-click scan with real-time progress
 - Color-coded results (green/yellow/red) with expandable details
 - Risk score (0-100) that tracks over time
@@ -78,7 +80,9 @@ Each check returns a clear status: **All Good**, **Worth Checking**, or **Needs 
 - Crypto miner detection (flags sustained high CPU+GPU load with high temps)
 - Trend charts showing temperature and load over 24 hours
 - All sensor raw data dump for power users
-- Powered by LibreHardwareMonitor (MIT)
+- Uses only Windows built-in APIs — no third-party sensor libraries
+- Device security posture checks (BitLocker, Secure Boot, TPM, UAC)
+- Security event scanning (failed logins, crashes, BSODs)
 
 ### Periodic Scanning
 - Configurable scan interval (5 min to 2 hours)
@@ -144,13 +148,18 @@ PCGuardian.csproj          Project file (.NET 8, WinForms)
 Program.cs                 Entry point, single-instance mutex
 Models.cs                  Status, Finding, Category, Report records
 Theme.cs                   Colors, fonts, dark theme constants
-ScanEngine.cs              14 scan checks using native APIs (Registry, WMI, P/Invoke, ServiceController)
+ScanEngine.cs              16 scan checks using native APIs (Registry, WMI, P/Invoke, ServiceController)
 MainForm.cs                Main window — home dashboard, scan results, navigation
 SettingsForm.cs            Dedicated settings page
 ActivityForm.cs            Process history viewer (SQLite-backed)
 NetworkForm.cs             Live TCP connection monitor
-HardwareMonitor.cs         LHM wrapper — background sensor sampling, crypto miner detection
-HardwareForm.cs            Live hardware dashboard with trends and storage health
+SystemMonitor.cs           Facade — composes PerfService + WmiService + SecurityService
+PerfService.cs             PerformanceCounter polling (CPU, GPU, RAM, disk I/O)
+WmiService.cs              WMI queries (thermal, battery, disk health, system info)
+SecurityService.cs         Security posture checks (BitLocker, TPM, UAC, auto-login)
+EventScanner.cs            Windows Event Log scanner (failed logins, crashes, BSODs)
+MinerDetector.cs           Crypto miner detection scoring engine
+CpuGpuForm.cs              Live system monitor dashboard
 BandwidthMonitor.cs        Per-process I/O rate tracking
 OnboardingForm.cs          First-run wizard
 Database.cs                SQLite schema, queries, process/scan history
@@ -182,7 +191,7 @@ build.bat                  One-click build script
 | System Access | Registry, WMI, P/Invoke (GetExtendedTcpTable), ServiceController |
 | PDF | Pure C# — System.Drawing + custom layout engine |
 | Networking | HttpListener (IT server), HttpClient (update checker) |
-| Sensors | LibreHardwareMonitor | CPU/GPU temp, fans, S.M.A.R.T., battery |
+| Sensors | Windows PerformanceCounter + WMI | CPU/GPU load, RAM, disk I/O, thermal, battery, S.M.A.R.T. |
 
 ### Why These Choices
 
