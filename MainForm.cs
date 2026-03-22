@@ -142,8 +142,20 @@ internal sealed class MainForm : Form
             // Resize children that depend on width
             foreach (Control c in homeInner.Controls)
             {
-                if (c is Panel p) p.Width = w;
-                else if (c is FlowLayoutPanel f) f.Width = w;
+                if (c is FlowLayoutPanel f)
+                {
+                    f.Width = w;
+                    // Resize cards inside action rows to fill evenly
+                    int cardCount = f.Controls.Count;
+                    if (cardCount > 0)
+                    {
+                        int gap = 6;
+                        int cardW = (w - gap * (cardCount - 1)) / cardCount;
+                        foreach (Control card in f.Controls)
+                            card.Width = cardW;
+                    }
+                }
+                else if (c is Panel p) p.Width = w;
                 else if (c is Label l && l.Tag?.ToString() == "stretch") l.MaximumSize = new(w, 0);
             }
         }
@@ -419,7 +431,8 @@ internal sealed class MainForm : Form
         }
         homeFlow.Controls.Add(pnlInfo);
 
-        viewIdle.Controls.Add(homeFlow);
+        // Initial layout pass — set correct widths before first display
+        CenterHome();
 
         // --- Scanning view ---
         viewScanning = new Panel { Dock = DockStyle.Fill, Visible = false };
