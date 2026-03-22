@@ -106,8 +106,8 @@ internal sealed class MainForm : Form
     {
         Text = "PC Guardian";
         Size = new(640, 800);
-        MinimumSize = new(640, 600);
-        FormBorderStyle = FormBorderStyle.Sizable;
+        FormBorderStyle = FormBorderStyle.FixedSingle;
+        MaximizeBox = false;
         StartPosition = FormStartPosition.CenterScreen;
         BackColor = Theme.BgPrimary;
         ForeColor = Theme.TextPrimary;
