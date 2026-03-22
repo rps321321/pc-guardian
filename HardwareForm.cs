@@ -290,8 +290,8 @@ internal sealed class HardwareForm : Form
 
     void RefreshOverview(HardwareSnapshot snap)
     {
-        // 0: CPU Temp
-        SetOverviewValue(0, snap.CpuTemp, "\u00B0C", v => v > 85 ? Theme.Danger : v > 70 ? Theme.Warning : Theme.Safe);
+        // 0: CPU Temp (0°C without admin = unreliable)
+        SetOverviewValue(0, snap.CpuTemp, "\u00B0C", v => v > 85 ? Theme.Danger : v > 70 ? Theme.Warning : Theme.Safe, zeroIsUnreliable: true);
 
         // 1: CPU Load
         SetOverviewValue(1, snap.CpuLoad, "%", _ => Theme.TextPrimary);
@@ -315,8 +315,8 @@ internal sealed class HardwareForm : Form
             _valueLabels[3].ForeColor = Theme.TextMuted;
         }
 
-        // 4: Fan Speed
-        SetOverviewValue(4, snap.CpuFanRpm, " RPM", _ => Theme.TextPrimary);
+        // 4: Fan Speed (0 RPM without admin = unreliable, not a stopped fan)
+        SetOverviewValue(4, snap.CpuFanRpm, " RPM", _ => Theme.TextPrimary, zeroIsUnreliable: true);
 
         // 5: CPU Power
         SetOverviewValue(5, snap.CpuPower, " W", _ => Theme.TextPrimary);
@@ -345,11 +345,12 @@ internal sealed class HardwareForm : Form
         _valueLabels[8].Text = "";
     }
 
-    void SetOverviewValue(int index, double? value, string suffix, Func<double, Color> colorFn)
+    void SetOverviewValue(int index, double? value, string suffix, Func<double, Color> colorFn, bool zeroIsUnreliable = false)
     {
-        if (value is null)
+        if (value is null || (zeroIsUnreliable && value == 0 && !AdminHelper.IsAdmin()))
         {
-            _valueLabels[index].Text = "\u2014";
+            _valueLabels[index].Text = !AdminHelper.IsAdmin() ? "Run as admin" : "\u2014";
+            _valueLabels[index].Font = Theme.CardBody;
             _valueLabels[index].ForeColor = Theme.TextMuted;
             return;
         }
@@ -372,17 +373,19 @@ internal sealed class HardwareForm : Form
 
         foreach (var d in snap.Drives)
         {
-            string status = d.RemainingLife switch
+            // RemainingLife can be null (no admin), 0 (unreliable read without admin), or a real value
+            bool unreliable = !d.RemainingLife.HasValue || (d.RemainingLife == 0 && !AdminHelper.IsAdmin());
+            string status = unreliable ? "Unknown" : d.RemainingLife switch
             {
-                <= 10 => "Critical",
-                <= 50 => "Wear",
+                <= 5 => "Critical",
+                <= 20 => "Wear",
                 _ => "Healthy",
             };
 
             _gridStorage.Rows.Add(
                 d.Name,
                 d.Temperature.HasValue ? $"{d.Temperature:0}\u00B0C" : "\u2014",
-                d.RemainingLife.HasValue ? $"{d.RemainingLife:0}%" : "\u2014",
+                unreliable ? "Run as admin" : $"{d.RemainingLife:0}%",
                 d.TotalWritten.HasValue ? $"{d.TotalWritten / 1024f:0.1} TB" : "\u2014",
                 status);
         }
@@ -402,6 +405,7 @@ internal sealed class HardwareForm : Form
             "Critical" => Theme.Danger,
             "Wear" => Theme.Warning,
             "Healthy" => Theme.Safe,
+            "Unknown" => Theme.TextMuted,
             _ => Theme.TextPrimary,
         };
     }

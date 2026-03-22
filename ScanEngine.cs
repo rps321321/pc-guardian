@@ -858,13 +858,20 @@ internal static class ScanEngine
                 "Install hardware monitoring drivers for detailed health info.");
         }
 
-        // CPU Temperature
+        // CPU Temperature (0°C without admin = unreliable sensor read)
         if (snap.CpuTemp is { } cpuTemp)
         {
-            var s = cpuTemp > 85 ? Status.Danger : cpuTemp >= 70 ? Status.Warning : Status.Safe;
-            findings.Add(new("CPU Temperature",
-                $"{cpuTemp:F0}\u00B0C" + (s == Status.Danger ? " \u2014 critically hot!" : s == Status.Warning ? " \u2014 running warm" : " \u2014 normal"),
-                s));
+            if (cpuTemp == 0 && !snap.IsAdmin)
+            {
+                findings.Add(new("CPU Temperature", "Unavailable \u2014 run as admin for sensor access", Status.Safe));
+            }
+            else
+            {
+                var s = cpuTemp > 85 ? Status.Danger : cpuTemp >= 70 ? Status.Warning : Status.Safe;
+                findings.Add(new("CPU Temperature",
+                    $"{cpuTemp:F0}\u00B0C" + (s == Status.Danger ? " \u2014 critically hot!" : s == Status.Warning ? " \u2014 running warm" : " \u2014 normal"),
+                    s));
+            }
         }
 
         // GPU Temperature (skip if no GPU)
@@ -899,10 +906,20 @@ internal static class ScanEngine
         {
             if (drive.RemainingLife is { } life)
             {
-                var s = life < 5 ? Status.Danger : life < 20 ? Status.Warning : Status.Safe;
-                findings.Add(new($"Drive: {drive.Name}",
-                    $"{life}% life remaining" + (s == Status.Danger ? " \u2014 replace soon!" : s == Status.Warning ? " \u2014 wearing out" : ""),
-                    s));
+                // 0% without admin is an unreliable read — don't flag as critical
+                if (life == 0 && !snap.IsAdmin)
+                {
+                    findings.Add(new($"Drive: {drive.Name}",
+                        "Health data unavailable \u2014 run as admin for accurate S.M.A.R.T. readings",
+                        Status.Safe));
+                }
+                else
+                {
+                    var s = life < 5 ? Status.Danger : life < 20 ? Status.Warning : Status.Safe;
+                    findings.Add(new($"Drive: {drive.Name}",
+                        $"{life}% life remaining" + (s == Status.Danger ? " \u2014 replace soon!" : s == Status.Warning ? " \u2014 wearing out" : ""),
+                        s));
+                }
             }
         }
 
@@ -916,8 +933,9 @@ internal static class ScanEngine
         }
 
         // Fan speed
-        if (snap.CpuFanRpm is { } fanRpm && fanRpm == 0)
+        if (snap.CpuFanRpm is { } fanRpm && fanRpm == 0 && snap.IsAdmin)
         {
+            // Only flag stopped fan when running as admin (0 RPM without admin = no sensor access)
             findings.Add(new("CPU Fan", "Fan stopped \u2014 possible failure!", Status.Warning));
         }
 
