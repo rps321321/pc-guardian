@@ -185,7 +185,7 @@ internal sealed class MainForm : Form
         dashPanel.ScanRequested += () => RunScan();
         dashPanel.ActivityRequested += () => ShowActivityForm();
         dashPanel.NetworkRequested += () => ShowNetworkForm();
-        dashPanel.SettingsRequested += () => { using var f = new SettingsForm(settings, db, ApplySettings); f.ShowDialog(this); };
+        dashPanel.SettingsRequested += () => OpenSettings();
         dashPanel.FixRequested += ExecuteRecommendationFix;
         viewIdle.Controls.Add(dashPanel);
 
@@ -265,11 +265,7 @@ internal sealed class MainForm : Form
         var btnSettingsR = MakeButton("\u2699  Settings", 100, 34, Theme.BgCard);
         btnSettingsR.Font = Theme.CardBody;
         btnSettingsR.Location = new(112, 8);
-        btnSettingsR.Click += (_, _) =>
-        {
-            using var form = new SettingsForm(settings, db, ApplySettings);
-            form.ShowDialog(this);
-        };
+        btnSettingsR.Click += (_, _) => OpenSettings();
         tip.SetToolTip(btnSettingsR, "Change how the app works \u2014 scanning schedule,\nstartup, notifications, and more.");
 
         var btnActivityR = MakeButton("\uD83D\uDCCA  Activity", 100, 34, Theme.BgCard);
@@ -1066,8 +1062,7 @@ internal sealed class MainForm : Form
                 ShowCpuGpuForm();
                 return true;
             case Keys.Control | Keys.Oemcomma: // Ctrl+, = Settings
-                using (var f = new SettingsForm(settings, db, ApplySettings))
-                    f.ShowDialog(this);
+                OpenSettings();
                 return true;
             case Keys.Escape: // Esc = go home
                 ShowView("idle");
@@ -1100,6 +1095,13 @@ internal sealed class MainForm : Form
             stepTimer?.Dispose();
         }
         base.Dispose(disposing);
+    }
+
+    void OpenSettings()
+    {
+        var tStatus = tunnel?.IsRunning == true ? "Connected" : tunnel?.NotFoundReason;
+        using var f = new SettingsForm(settings, db, ApplySettings, tunnelUrl, tStatus);
+        f.ShowDialog(this);
     }
 
     void ShowActivityForm()

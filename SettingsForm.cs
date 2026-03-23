@@ -22,12 +22,16 @@ internal sealed class SettingsForm : Form
     CheckBox chkITSharing = null!;
     TextBox txtPin = null!;
     Label lblShareUrl = null!;
+    string? _tunnelUrl;
+    string? _tunnelStatus;
 
-    public SettingsForm(AppSettings settings, Database db, Action onSave)
+    public SettingsForm(AppSettings settings, Database db, Action onSave, string? tunnelUrl = null, string? tunnelStatus = null)
     {
         _settings = settings;
         _db = db;
         _onSave = onSave;
+        _tunnelUrl = tunnelUrl;
+        _tunnelStatus = tunnelStatus;
 
         _tip = DarkTooltip.Create();
 
@@ -137,19 +141,94 @@ internal sealed class SettingsForm : Form
         scroll.Controls.Add(txtPin);
         y += 36;
 
-        // URL preview
-        var ip = ITServer.GetLocalIp();
-        lblShareUrl = new Label
+        // Remote access status + URL
+        if (!string.IsNullOrEmpty(_tunnelUrl))
         {
-            Text = $"Your IT person opens:  http://{ip}:7777",
-            Font = Theme.Small,
-            ForeColor = Theme.Accent,
-            AutoSize = true,
-            Location = new(left, y),
-        };
-        _tip.SetToolTip(lblShareUrl, "This is the address your IT person types into\ntheir web browser to see your results.\nThey need to be on the same network as you.");
-        scroll.Controls.Add(lblShareUrl);
-        y += 24;
+            // Tunnel is active — show the URL prominently
+            var lblStatus = new Label
+            {
+                Text = "Remote Access: Connected",
+                Font = new Font("Segoe UI Semibold", 10f),
+                ForeColor = Theme.Safe,
+                AutoSize = true,
+                Location = new(left, y),
+            };
+            scroll.Controls.Add(lblStatus);
+            y += 24;
+
+            var fullUrl = _tunnelUrl + "/terminal";
+            lblShareUrl = new Label
+            {
+                Text = fullUrl,
+                Font = new Font("Segoe UI", 10f),
+                ForeColor = Theme.Accent,
+                AutoSize = true,
+                Location = new(left, y),
+                Cursor = Cursors.Hand,
+            };
+            lblShareUrl.Click += (_, _) =>
+            {
+                Clipboard.SetText($"URL: {fullUrl}\nPIN: {txtPin.Text.Trim()}");
+                lblShareUrl.Text = fullUrl + "  (copied!)";
+            };
+            _tip.SetToolTip(lblShareUrl, "Click to copy the URL and PIN to clipboard.\nSend this to your IT person — they open it in\nany browser to access your PC remotely.");
+            scroll.Controls.Add(lblShareUrl);
+            y += 24;
+
+            var btnCopy = new Button
+            {
+                Text = "Copy Link + PIN",
+                Size = new(160, 32),
+                Location = new(left, y),
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Theme.Accent,
+                ForeColor = Color.White,
+                Cursor = Cursors.Hand,
+            };
+            btnCopy.FlatAppearance.BorderSize = 0;
+            btnCopy.Click += (_, _) =>
+            {
+                var pin = txtPin.Text.Trim();
+                Clipboard.SetText($"PC Guardian Remote Access\nURL: {fullUrl}\nPIN: {pin}");
+                btnCopy.Text = "Copied!";
+                var t = new System.Windows.Forms.Timer { Interval = 2000 };
+                t.Tick += (_, _) => { btnCopy.Text = "Copy Link + PIN"; t.Dispose(); };
+                t.Start();
+            };
+            _tip.SetToolTip(btnCopy, "Copies the URL and PIN so you can paste\nit into a chat, email, or text to your IT person.");
+            scroll.Controls.Add(btnCopy);
+            y += 40;
+        }
+        else
+        {
+            // No tunnel — show status or local URL
+            var statusText = !string.IsNullOrEmpty(_tunnelStatus) ? _tunnelStatus : "Not connected";
+            var statusColor = statusText.Contains("Download") ? Theme.Warning : Theme.TextMuted;
+
+            var lblStatus = new Label
+            {
+                Text = $"Remote Access: {statusText}",
+                Font = new Font("Segoe UI", 9.5f),
+                ForeColor = statusColor,
+                AutoSize = true,
+                Location = new(left, y),
+            };
+            scroll.Controls.Add(lblStatus);
+            y += 22;
+
+            var ip = ITServer.GetLocalIp();
+            lblShareUrl = new Label
+            {
+                Text = $"Local network: http://{ip}:7777/terminal",
+                Font = Theme.Small,
+                ForeColor = Theme.TextMuted,
+                AutoSize = true,
+                Location = new(left, y),
+            };
+            _tip.SetToolTip(lblShareUrl, "This only works if your IT person is on\nthe same WiFi or network as you.");
+            scroll.Controls.Add(lblShareUrl);
+            y += 24;
+        }
 
         y = AddSpacer(scroll, left, y);
 
