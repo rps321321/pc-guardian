@@ -350,7 +350,7 @@ internal sealed class ITServer : IDisposable
                     return;
                 }
                 var action = req.QueryString["action"] ?? "";
-                var result = ExecuteAction(action);
+                var result = ExecuteAction(action, req.QueryString["name"]);
                 WriteJsonResponse(resp, result, 200);
                 return;
             }
@@ -435,7 +435,24 @@ internal sealed class ITServer : IDisposable
 
             var memInfo = GC.GetGCMemoryInfo();
             var totalMemMb = memInfo.TotalAvailableMemoryBytes / (1024 * 1024);
-            var usedMemMb = totalMemMb - (long)(_memCounter?.NextValue() ?? 0);
+            var availMb = (long)(_memCounter?.NextValue() ?? 0);
+            var usedMemMb = totalMemMb - availMb;
+            var ramPercent = totalMemMb > 0 ? (int)(usedMemMb * 100 / totalMemMb) : 0;
+
+            // Uptime
+            var uptimeTs = TimeSpan.FromMilliseconds(Environment.TickCount64);
+            var uptimeStr = uptimeTs.Days > 0
+                ? $"{uptimeTs.Days} day{(uptimeTs.Days != 1 ? "s" : "")} {uptimeTs.Hours} hour{(uptimeTs.Hours != 1 ? "s" : "")}"
+                : $"{uptimeTs.Hours} hour{(uptimeTs.Hours != 1 ? "s" : "")} {uptimeTs.Minutes} min";
+
+            // GPU placeholder
+            var gpuStr = "N/A";
+            try
+            {
+                using var gpuCounter = new PerformanceCounter("GPU Engine", "Utilization Percentage", "_Total");
+                gpuStr = ((int)gpuCounter.NextValue()) + "%";
+            }
+            catch { gpuStr = "N/A"; }
 
             var drives = DriveInfo.GetDrives()
                 .Where(d => d.IsReady && d.DriveType == DriveType.Fixed)
@@ -443,36 +460,67 @@ internal sealed class ITServer : IDisposable
                 {
                     name = d.Name,
                     totalGb = d.TotalSize / (1024L * 1024 * 1024),
-                    freeGb = d.AvailableFreeSpace / (1024L * 1024 * 1024)
+                    freeGb = d.AvailableFreeSpace / (1024L * 1024 * 1024),
+                    usedGb = (d.TotalSize - d.AvailableFreeSpace) / (1024L * 1024 * 1024),
+                    percentUsed = (int)((d.TotalSize - d.AvailableFreeSpace) * 100 / d.TotalSize)
                 });
 
-            var scanStatus = _latestReport != null
-                ? new { status = "completed", timestamp = _latestReport.Timestamp.ToString("o"), issueCount = _latestReport.WarningCount + _latestReport.DangerCount }
-                : null;
+            // Build full scan data if available
+            object? scanObj = null;
+            if (_latestReport != null)
+            {
+                var cats = _latestReport.Categories.Select(c => new
+                {
+                    id = c.Id,
+                    title = c.Title,
+                    icon = c.Icon,
+                    status = c.Status.ToString(),
+                    summary = c.Summary,
+                    findings = c.Findings.Select(f => new
+                    {
+                        label = f.Label,
+                        detail = f.Detail,
+                        status = f.Status.ToString()
+                    }),
+                    tip = c.Tip
+                });
+                scanObj = new
+                {
+                    status = "completed",
+                    timestamp = _latestReport.Timestamp.ToString("o"),
+                    overall = _latestReport.Overall.ToString(),
+                    safeCount = _latestReport.SafeCount,
+                    warningCount = _latestReport.WarningCount,
+                    dangerCount = _latestReport.DangerCount,
+                    categories = cats
+                };
+            }
 
             var metrics = new
             {
                 cpu = cpuPercent,
                 ramTotalMb = totalMemMb,
                 ramUsedMb = usedMemMb,
-                gpu = "N/A",
-                disks = drives,
+                ramPercent,
+                gpu = gpuStr,
                 hostname = Environment.MachineName,
-                scan = scanStatus
+                uptime = uptimeStr,
+                disks = drives,
+                scan = scanObj
             };
 
             return JsonSerializer.Serialize(metrics);
         }
         catch (Exception ex)
         {
-            return JsonSerializer.Serialize(new { cpu = -1, ramTotalMb = 0, ramUsedMb = 0, gpu = "N/A", error = ex.Message, hostname = Environment.MachineName });
+            return JsonSerializer.Serialize(new { cpu = -1, ramTotalMb = 0, ramUsedMb = 0, ramPercent = 0, gpu = "N/A", error = ex.Message, hostname = Environment.MachineName, uptime = "unknown" });
         }
     }
 
     /// <summary>Fired when a remote IT user requests a scan via the API.</summary>
     public event Action? ScanRequested;
 
-    string ExecuteAction(string action)
+    string ExecuteAction(string action, string? queryName = null)
     {
         try
         {
@@ -481,6 +529,9 @@ internal sealed class ITServer : IDisposable
                 "scan" => InvokeScan(),
                 "fixdns" => RunShellAction("ipconfig /flushdns"),
                 "firewall" => RunShellAction("netsh advfirewall set allprofiles state on"),
+                "blockrdp" => RunShellAction("reg add \"HKLM\\SYSTEM\\CurrentControlSet\\Control\\Terminal Server\" /v fDenyTSConnections /t REG_DWORD /d 1 /f"),
+                "resetnetwork" => RunShellAction("netsh winsock reset && netsh int ip reset && ipconfig /flushdns && ipconfig /release && ipconfig /renew"),
+                "killprocess" => KillProcessByName(queryName ?? ""),
                 _ => new { ok = false, message = $"Unknown action: {action}" }
             };
             return JsonSerializer.Serialize(result);
@@ -488,6 +539,29 @@ internal sealed class ITServer : IDisposable
         catch (Exception ex)
         {
             return JsonSerializer.Serialize(new { ok = false, message = ex.Message });
+        }
+    }
+
+    static object KillProcessByName(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+            return new { ok = false, message = "No process name provided." };
+        try
+        {
+            var procs = Process.GetProcessesByName(name.Replace(".exe", ""));
+            if (procs.Length == 0)
+                return new { ok = false, message = $"No process found with name '{name}'." };
+            int killed = 0;
+            foreach (var p in procs)
+            {
+                try { p.Kill(); killed++; } catch { }
+                p.Dispose();
+            }
+            return new { ok = true, message = $"Killed {killed} instance(s) of '{name}'." };
+        }
+        catch (Exception ex)
+        {
+            return new { ok = false, message = ex.Message };
         }
     }
 
@@ -567,123 +641,371 @@ internal sealed class ITServer : IDisposable
     {
         var safeCompany = WebUtility.HtmlEncode(company);
         var showTerminal = trustLevel == "full";
-        return "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\">"
-            + "<title>" + safeCompany + " - Remote Support</title>"
-            + "<style>"
-            + "*{margin:0;padding:0;box-sizing:border-box}"
-            + "body{font-family:'Segoe UI',system-ui,sans-serif;background:#09090b;color:#fafafa;height:100vh;display:flex;flex-direction:column}"
-            + ".pin-screen{display:flex;justify-content:center;align-items:center;height:100vh}"
-            + ".pin-box{text-align:center;background:#18181b;padding:48px;border-radius:16px;border:1px solid #27272a}"
-            + ".pin-box h2{margin-bottom:12px;font-size:24px}"
-            + ".pin-box p{color:#a1a1aa;margin-bottom:24px;font-size:14px}"
-            + ".pin-box input{font-size:28px;width:200px;text-align:center;padding:12px;background:#09090b;border:2px solid #27272a;border-radius:8px;color:#fafafa;letter-spacing:8px}"
-            + ".pin-box input:focus{outline:none;border-color:#6366f1}"
-            + ".pin-box button{margin-top:20px;padding:12px 40px;background:#6366f1;color:white;border:none;border-radius:8px;font-size:16px;cursor:pointer}"
-            + ".pin-box .error{color:#ef4444;margin-top:12px;font-size:13px;display:none}"
-            + "header{background:#18181b;padding:12px 24px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #27272a}"
-            + "header h1{font-size:18px;font-weight:600}"
-            + ".tabs{display:flex;gap:0;background:#18181b;border-bottom:1px solid #27272a}"
-            + ".tab{padding:10px 24px;cursor:pointer;color:#a1a1aa;font-size:14px;border-bottom:2px solid transparent}"
-            + ".tab:hover{color:#fafafa}.tab.active{color:#6366f1;border-color:#6366f1}"
-            + ".content{flex:1;overflow:auto;padding:24px}"
-            + ".metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:24px}"
-            + ".mc{background:#18181b;border:1px solid #27272a;border-radius:12px;padding:20px}"
-            + ".mc .l{font-size:12px;color:#a1a1aa;text-transform:uppercase;letter-spacing:1px}"
-            + ".mc .v{font-size:32px;font-weight:700;margin-top:8px}"
-            + ".safe{color:#10b981}.warn{color:#f59e0b}.danger{color:#ef4444}"
-            + ".actions{display:flex;gap:12px;margin-bottom:24px}"
-            + ".actions button{padding:10px 20px;background:#18181b;border:1px solid #27272a;border-radius:8px;color:#fafafa;cursor:pointer;font-size:13px}"
-            + ".actions button:hover{background:#27272a}"
-            + ".actions .pri{background:#6366f1;border-color:#6366f1}"
-            + "#tout{flex:1;background:#09090b;font-family:Consolas,monospace;font-size:13px;padding:16px;overflow-y:auto;white-space:pre-wrap;line-height:1.6;border:1px solid #27272a;border-radius:8px}"
-            + "#trow{display:flex;align-items:center;padding:12px 0;gap:8px}"
-            + "#trow span{color:#6366f1;font-family:monospace;font-weight:bold}"
-            + "#tinp{flex:1;background:#18181b;border:1px solid #27272a;border-radius:6px;color:#fafafa;font-family:monospace;font-size:13px;padding:8px 12px}"
-            + "#tinp:focus{outline:none;border-color:#6366f1}"
-            + "#slog{font-family:monospace;font-size:12px;line-height:1.8}"
-            + "#slog .e{padding:4px 0;border-bottom:1px solid #18181b}"
-            + "#slog .t{color:#71717a}"
-            + "</style></head><body>"
-            + "<div class=\"pin-screen\" id=\"ps\">"
-            + "<div class=\"pin-box\"><h2>" + safeCompany + "</h2>"
-            + "<p>Enter PIN to access remote support</p>"
-            + "<input type=\"text\" id=\"pi\" maxlength=\"10\" autofocus placeholder=\"PIN\">"
-            + "<br><button onclick=\"ck()\">Connect</button>"
-            + "<div class=\"error\" id=\"pe\">Invalid PIN</div></div></div>"
-            + "<div id=\"app\" style=\"display:none;flex-direction:column;height:100vh\">"
-            + "<header><h1>" + safeCompany + " - Remote Support</h1>"
-            + "<div style=\"display:flex;align-items:center;gap:8px;font-size:13px;color:#a1a1aa\">"
-            + "<div style=\"width:8px;height:8px;border-radius:50%;background:#10b981\" id=\"cd\"></div>"
-            + "<span id=\"ct\">Connected</span></div></header>"
-            + "<div class=\"tabs\">"
-            + "<div class=\"tab active\" onclick=\"st('d')\" id=\"td\">Dashboard</div>"
-            + (showTerminal ? "<div class=\"tab\" onclick=\"st('t')\" id=\"tt\">Terminal</div>" : "")
-            + "<div class=\"tab\" onclick=\"st('l')\" id=\"tl\">Session Log</div></div>"
-            + "<div class=\"content\" id=\"co\">"
-            + "<div id=\"vd\"><div class=\"metrics\" id=\"mt\"></div>"
-            + "<div class=\"actions\">"
-            + "<button class=\"pri\" onclick=\"da('scan')\">Run Scan</button>"
-            + "<button onclick=\"da('fixdns')\">Fix DNS</button>"
-            + "<button onclick=\"da('firewall')\">Enable Firewall</button></div></div>"
-            + "<div id=\"vt\" style=\"display:none;height:100%;flex-direction:column\">"
-            + "<div id=\"tout\"></div>"
-            + "<div id=\"trow\"><span>PS&gt;</span><input type=\"text\" id=\"tinp\" placeholder=\"Type a command...\" onkeydown=\"if(event.key==='Enter')sc()\"></div></div>"
-            + "<div id=\"vl\" style=\"display:none\"><div id=\"slog\"></div></div>"
-            + "</div></div>"
-            + "<script>"
-            + "let pn='',ws=null,ch=[],hi=-1;"
-            + "function ck(){pn=document.getElementById('pi').value;"
-            + "fetch('/api/metrics?pin='+encodeURIComponent(pn)).then(r=>{"
-            + "if(r.ok){document.getElementById('ps').style.display='none';"
-            + "var a=document.getElementById('app');a.style.display='flex';"
-            + "sessionStorage.setItem('pin',pn);sp();al('Connected to '+location.hostname);"
-            + (showTerminal ? "cw();" : "")
-            + "}else{document.getElementById('pe').style.display='block'}"
-            + "}).catch(()=>document.getElementById('pe').style.display='block')}"
-            + "function st(t){document.querySelectorAll('.tab').forEach(e=>e.classList.remove('active'));"
-            + "var m={d:'td',t:'tt',l:'tl'};if(document.getElementById(m[t]))document.getElementById(m[t]).classList.add('active');"
-            + "['d','t','l'].forEach(v=>{var e=document.getElementById('v'+v);if(e)e.style.display=v===t?(v==='t'?'flex':'block'):'none'})}"
-            + "function sp(){rm();setInterval(rm,3000)}"
-            + "function rm(){fetch('/api/metrics?pin='+encodeURIComponent(pn)).then(r=>r.json()).then(d=>{"
-            + "var m=document.getElementById('mt');"
-            + "var c=function(v,l,h){return v<l?'safe':v<h?'warn':'danger'};"
-            + "var rp=d.ramTotalMb>0?Math.round(d.ramUsedMb/d.ramTotalMb*100):0;"
-            + "m.textContent='';"  // Clear safely
-            + "var cards=[{l:'CPU',v:d.cpu+'%',s:c(d.cpu,50,80)},{l:'RAM',v:rp+'%',s:c(rp,60,85)},"
-            + "{l:'Host',v:d.hostname,s:''},{l:'Scan',v:d.scan?'Done':'Pending',s:''}];"
-            + "cards.forEach(function(cd){"
-            + "var div=document.createElement('div');div.className='mc';"
-            + "var lbl=document.createElement('div');lbl.className='l';lbl.textContent=cd.l;"
-            + "var val=document.createElement('div');val.className='v'+(cd.s?' '+cd.s:'');val.textContent=cd.v;"
-            + "if(cd.l==='Host'||cd.l==='Scan')val.style.fontSize='16px';"
-            + "div.appendChild(lbl);div.appendChild(val);m.appendChild(div)})"
-            + "}).catch(()=>{})}"
-            + "function da(a){al('Action: '+a);"
-            + "fetch('/api/action?pin='+encodeURIComponent(pn)+'&action='+a).then(r=>r.json()).then(d=>{"
-            + "al('Result: '+(d.message||JSON.stringify(d)));"
-            + "if(a==='scan')setTimeout(rm,3000)}).catch(e=>al('Error: '+e))}"
-            + (showTerminal
-                ? "function cw(){var p=location.protocol==='https:'?'wss:':'ws:';"
-                  + "ws=new WebSocket(p+'//'+location.host+'/shell?pin='+encodeURIComponent(pn));"
-                  + "ws.onopen=function(){al('Shell connected');document.getElementById('cd').style.background='#10b981'};"
-                  + "ws.onmessage=function(e){var o=document.getElementById('tout');o.textContent+=e.data;o.scrollTop=o.scrollHeight};"
-                  + "ws.onclose=function(){al('Shell disconnected');document.getElementById('cd').style.background='#ef4444';"
-                  + "setTimeout(cw,3000)}}"
-                  + "function sc(){var i=document.getElementById('tinp');"
-                  + "if(!i.value.trim()||!ws)return;var cmd=i.value;ch.unshift(cmd);hi=-1;"
-                  + "al('$ '+cmd);ws.send(cmd+'\\n');i.value=''}"
-                : "")
-            + "function al(msg){var log=document.getElementById('slog');"
-            + "var d=document.createElement('div');d.className='e';"
-            + "var ts=document.createElement('span');ts.className='t';ts.textContent=new Date().toLocaleTimeString()+' ';"
-            + "d.appendChild(ts);d.appendChild(document.createTextNode(msg));log.appendChild(d)}"
-            + "window.onload=function(){var s=sessionStorage.getItem('pin');"
-            + "if(s){document.getElementById('pi').value=s;ck()}"
-            + "var inp=document.getElementById('tinp');"
-            + "if(inp)inp.addEventListener('keydown',function(e){"
-            + "if(e.key==='ArrowUp'&&ch.length){hi=Math.min(hi+1,ch.length-1);e.target.value=ch[hi]}"
-            + "if(e.key==='ArrowDown'){hi=Math.max(hi-1,-1);e.target.value=hi>=0?ch[hi]:''}})};"
-            + "</script></body></html>";
+        var sb = new StringBuilder(32000);
+        sb.Append(@"<!DOCTYPE html><html lang=""en""><head><meta charset=""utf-8""><meta name=""viewport"" content=""width=device-width,initial-scale=1"">
+<title>"); sb.Append(safeCompany); sb.Append(@" - Remote Support</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#09090b;--card:#18181b;--border:#27272a;--text:#fafafa;--muted:#a1a1aa;--accent:#6366f1;--accent-hover:#818cf8;--safe:#10b981;--warn:#f59e0b;--danger:#ef4444;--safe-bg:rgba(16,185,129,0.1);--warn-bg:rgba(245,158,11,0.1);--danger-bg:rgba(239,68,68,0.1)}
+body{font-family:'Segoe UI',system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text);height:100vh;display:flex;flex-direction:column;overflow:hidden}
+a{color:var(--accent)}
+/* PIN screen */
+.pin-screen{display:flex;justify-content:center;align-items:center;height:100vh;background:var(--bg)}
+.pin-box{text-align:center;background:var(--card);padding:48px 56px;border-radius:20px;border:1px solid var(--border);max-width:420px;width:90%}
+.pin-box .logo{font-size:40px;margin-bottom:16px}
+.pin-box h2{margin-bottom:8px;font-size:22px;font-weight:600}
+.pin-box p{color:var(--muted);margin-bottom:28px;font-size:14px;line-height:1.5}
+.pin-box input{font-size:28px;width:220px;text-align:center;padding:14px;background:var(--bg);border:2px solid var(--border);border-radius:10px;color:var(--text);letter-spacing:8px;transition:border-color .2s}
+.pin-box input:focus{outline:none;border-color:var(--accent)}
+.pin-box button{margin-top:24px;padding:14px 48px;background:var(--accent);color:white;border:none;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;transition:background .2s}
+.pin-box button:hover{background:var(--accent-hover)}
+.pin-box .error{color:var(--danger);margin-top:14px;font-size:13px;display:none}
+/* Header */
+header{background:var(--card);padding:14px 24px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border);flex-shrink:0}
+header .left{display:flex;align-items:center;gap:12px}
+header .left .shield{font-size:22px}
+header h1{font-size:17px;font-weight:600;letter-spacing:-0.3px}
+header .right{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--muted)}
+.dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.dot.on{background:var(--safe);box-shadow:0 0 8px rgba(16,185,129,0.5)}
+.dot.off{background:var(--danger)}
+/* Tabs */
+.tabs{display:flex;gap:0;background:var(--card);border-bottom:1px solid var(--border);flex-shrink:0;overflow-x:auto}
+.tab{padding:12px 28px;cursor:pointer;color:var(--muted);font-size:13px;font-weight:500;border-bottom:2px solid transparent;white-space:nowrap;transition:all .15s;user-select:none}
+.tab:hover{color:var(--text)}
+.tab.active{color:var(--accent);border-color:var(--accent)}
+/* Content */
+.content{flex:1;overflow-y:auto;padding:24px;min-height:0}
+/* Dashboard metric cards */
+.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:24px}
+@media(max-width:900px){.metrics{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:520px){.metrics{grid-template-columns:1fr}}
+.mc{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px;transition:border-color .2s}
+.mc:hover{border-color:#3f3f46}
+.mc .l{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1.2px;font-weight:500}
+.mc .v{font-size:30px;font-weight:700;margin-top:6px;letter-spacing:-1px}
+.mc .sub{font-size:12px;color:var(--muted);margin-top:4px}
+.safe-text{color:var(--safe)}.warn-text{color:var(--warn)}.danger-text{color:var(--danger)}
+/* Sections */
+.section-title{font-size:14px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:16px;margin-top:8px}
+/* Disk bars */
+.disk-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px;margin-bottom:28px}
+.disk-item{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px}
+.disk-item .name{font-size:13px;font-weight:600;margin-bottom:8px}
+.disk-item .bar-track{height:8px;background:#27272a;border-radius:4px;overflow:hidden}
+.disk-item .bar-fill{height:100%;border-radius:4px;transition:width .5s}
+.disk-item .info{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-top:6px}
+/* Action buttons */
+.actions{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:28px}
+.actions button{padding:10px 18px;background:var(--card);border:1px solid var(--border);border-radius:8px;color:var(--text);cursor:pointer;font-size:12px;font-weight:500;transition:all .15s;display:flex;align-items:center;gap:6px}
+.actions button:hover{background:#27272a;border-color:#3f3f46}
+.actions .pri{background:var(--accent);border-color:var(--accent);font-weight:600}
+.actions .pri:hover{background:var(--accent-hover);border-color:var(--accent-hover)}
+.actions .red{border-color:rgba(239,68,68,0.3);color:var(--danger)}
+.actions .red:hover{background:rgba(239,68,68,0.1)}
+.kill-group{display:flex;gap:0}
+.kill-group input{padding:10px 12px;background:var(--card);border:1px solid var(--border);border-right:none;border-radius:8px 0 0 8px;color:var(--text);font-size:12px;width:140px}
+.kill-group input:focus{outline:none;border-color:var(--accent)}
+.kill-group button{border-radius:0 8px 8px 0 !important}
+/* Security posture */
+.posture{display:flex;gap:16px;margin-bottom:28px;flex-wrap:wrap}
+.posture .pill{display:flex;align-items:center;gap:8px;padding:10px 18px;border-radius:10px;font-size:13px;font-weight:600}
+.posture .pill.s{background:var(--safe-bg);color:var(--safe)}
+.posture .pill.w{background:var(--warn-bg);color:var(--warn)}
+.posture .pill.d{background:var(--danger-bg);color:var(--danger)}
+/* Scan results */
+.scan-cat{background:var(--card);border:1px solid var(--border);border-radius:12px;margin-bottom:14px;overflow:hidden}
+.scan-cat-hdr{padding:16px 20px;display:flex;align-items:center;gap:12px;cursor:pointer;user-select:none}
+.scan-cat-hdr .icon{font-size:20px}
+.scan-cat-hdr .title{font-weight:600;font-size:14px;flex:1}
+.scan-cat-hdr .badge{padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;text-transform:uppercase}
+.badge-Safe{background:var(--safe-bg);color:var(--safe)}.badge-Warning{background:var(--warn-bg);color:var(--warn)}.badge-Danger{background:var(--danger-bg);color:var(--danger)}
+.scan-cat-body{padding:0 20px 16px;display:none}
+.scan-cat.open .scan-cat-body{display:block}
+.finding{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px}
+.finding:last-child{border-bottom:none}
+.finding .fd{color:var(--muted)}
+.tip{margin-top:10px;padding:10px 14px;background:rgba(99,102,241,0.06);border-radius:8px;font-size:12px;color:var(--muted);line-height:1.5;border-left:3px solid var(--accent)}
+.scan-empty{text-align:center;padding:60px 20px;color:var(--muted)}
+.scan-empty .big{font-size:48px;margin-bottom:16px}
+/* Terminal */
+.term-wrap{display:flex;flex-direction:column;height:100%}
+#tout{flex:1;background:var(--bg);font-family:'Cascadia Code','Fira Code',Consolas,'Courier New',monospace;font-size:13px;padding:16px;overflow-y:auto;white-space:pre-wrap;word-break:break-all;line-height:1.7;border:1px solid var(--border);border-radius:10px;color:#d4d4d8;min-height:200px}
+#tout .err{color:var(--danger)}
+#trow{display:flex;align-items:center;padding:12px 0;gap:8px;flex-shrink:0}
+#trow .prompt{color:var(--accent);font-family:monospace;font-weight:700;font-size:13px;white-space:nowrap}
+#tinp{flex:1;background:var(--card);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:'Cascadia Code',Consolas,monospace;font-size:13px;padding:10px 14px;transition:border-color .2s}
+#tinp:focus{outline:none;border-color:var(--accent)}
+/* Session log */
+#slog{font-family:'Cascadia Code',Consolas,monospace;font-size:12px;line-height:2}
+#slog .e{padding:4px 0;border-bottom:1px solid rgba(39,39,42,0.5)}
+#slog .ts{color:#52525b;margin-right:12px}
+#slog .act{color:var(--accent)}
+#slog .res{color:var(--safe)}
+#slog .err-log{color:var(--danger)}
+.log-empty{text-align:center;padding:60px 20px;color:var(--muted)}
+/* Toast */
+.toast-container{position:fixed;bottom:24px;right:24px;z-index:9999;display:flex;flex-direction:column;gap:8px}
+.toast{padding:12px 20px;background:var(--card);border:1px solid var(--border);border-radius:10px;font-size:13px;box-shadow:0 8px 30px rgba(0,0,0,0.4);animation:slideIn .3s ease;max-width:360px}
+.toast.success{border-left:3px solid var(--safe)}
+.toast.error{border-left:3px solid var(--danger)}
+@keyframes slideIn{from{transform:translateX(100px);opacity:0}to{transform:translateX(0);opacity:1}}
+/* View containers */
+.view{display:none}.view.active{display:block}.view.active-flex{display:flex;flex-direction:column}
+</style></head><body>
+
+<!-- PIN Screen -->
+<div class=""pin-screen"" id=""ps"">
+<div class=""pin-box"">
+<div class=""logo"">&#x1f6e1;&#xfe0f;</div>
+<h2>"); sb.Append(safeCompany); sb.Append(@"</h2>
+<p>Enter the PIN displayed on the client machine to access remote support.</p>
+<input type=""text"" id=""pi"" maxlength=""10"" autofocus placeholder=""PIN"" autocomplete=""off"">
+<br><button onclick=""ck()"">Connect</button>
+<div class=""error"" id=""pe"">Invalid PIN. Check the PIN on the client machine.</div>
+</div></div>
+
+<!-- Main App -->
+<div id=""app"" style=""display:none;flex-direction:column;height:100vh"">
+<header>
+<div class=""left"">
+<span class=""shield"">&#x1f6e1;&#xfe0f;</span>
+<h1>"); sb.Append(safeCompany); sb.Append(@" &mdash; Remote Support</h1>
+</div>
+<div class=""right"">
+<div class=""dot on"" id=""cd""></div>
+<span id=""ct"">Connected</span>
+</div>
+</header>
+
+<div class=""tabs"">
+<div class=""tab active"" onclick=""st('d')"" id=""tab-d"">Dashboard</div>
+<div class=""tab"" onclick=""st('s')"" id=""tab-s"">Scan Results</div>");
+        if (showTerminal)
+            sb.Append(@"<div class=""tab"" onclick=""st('t')"" id=""tab-t"">Terminal</div>");
+        sb.Append(@"
+<div class=""tab"" onclick=""st('l')"" id=""tab-l"">Session Log</div>
+</div>
+
+<div class=""content"" id=""co"">
+
+<!-- Dashboard View -->
+<div class=""view active"" id=""v-d"">
+<div class=""metrics"" id=""mt""></div>
+<div class=""section-title"">Disk Space</div>
+<div class=""disk-grid"" id=""disks""></div>
+<div class=""section-title"">Quick Actions</div>
+<div class=""actions"">
+<button class=""pri"" onclick=""da('scan')"">&#x1f50d; Run Scan</button>
+<button onclick=""da('fixdns')"">&#x1f310; Fix DNS</button>
+<button onclick=""da('firewall')"">&#x1f6e1;&#xfe0f; Enable Firewall</button>
+<button class=""red"" onclick=""da('blockrdp')"">&#x1f6ab; Block RDP</button>
+<button onclick=""da('resetnetwork')"">&#x1f504; Reset Network</button>
+<div class=""kill-group"">
+<input type=""text"" id=""kpname"" placeholder=""process name..."">
+<button class=""red"" onclick=""da('killprocess',document.getElementById('kpname').value)"">Kill Process</button>
+</div>
+</div>
+<div class=""section-title"">Security Posture</div>
+<div class=""posture"" id=""posture"">
+<div class=""pill s"" id=""p-safe"">&#x2714; 0 Passed</div>
+<div class=""pill w"" id=""p-warn"">&#x26a0;&#xfe0f; 0 Warnings</div>
+<div class=""pill d"" id=""p-danger"">&#x2716; 0 Danger</div>
+</div>
+</div>
+
+<!-- Scan Results View -->
+<div class=""view"" id=""v-s"">
+<div id=""scan-list""><div class=""scan-empty""><div class=""big"">&#x1f50d;</div><p>No scan results yet. Run a scan from the Dashboard.</p></div></div>
+</div>
+
+<!-- Terminal View -->");
+        if (showTerminal)
+        {
+            sb.Append(@"
+<div class=""view"" id=""v-t"" style=""height:100%"">
+<div class=""term-wrap"">
+<div id=""tout""></div>
+<div id=""trow""><span class=""prompt"">PS &gt;</span><input type=""text"" id=""tinp"" placeholder=""Type a PowerShell command..."" autocomplete=""off""></div>
+</div>
+</div>");
+        }
+        sb.Append(@"
+<!-- Session Log View -->
+<div class=""view"" id=""v-l"">
+<div id=""slog""><div class=""log-empty"">Session log will appear here once you start taking actions.</div></div>
+</div>
+
+</div><!-- /content -->
+</div><!-- /app -->
+
+<div class=""toast-container"" id=""toasts""></div>
+
+<script>
+let pn='',ws=null,cmdHistory=[],histIdx=-1,metricsData=null;
+const $=id=>document.getElementById(id);
+
+function toast(msg,type='success'){
+  var c=$('toasts'),d=document.createElement('div');
+  d.className='toast '+type;d.textContent=msg;c.appendChild(d);
+  setTimeout(()=>{d.style.opacity='0';d.style.transition='opacity .3s';setTimeout(()=>d.remove(),300)},4000);
+}
+
+function ck(){
+  pn=$('pi').value;
+  fetch('/api/metrics?pin='+encodeURIComponent(pn)).then(r=>{
+    if(r.ok){
+      $('ps').style.display='none';
+      $('app').style.display='flex';
+      sessionStorage.setItem('pin',pn);
+      startPolling();
+      logEntry('Connected to '+location.hostname,'act');
+      toast('Connected successfully');");
+        if (showTerminal)
+            sb.Append("connectWS();");
+        sb.Append(@"
+    }else{$('pe').style.display='block'}
+  }).catch(()=>$('pe').style.display='block');
+}
+
+function st(t){
+  document.querySelectorAll('.tab').forEach(e=>e.classList.remove('active'));
+  var tabEl=$('tab-'+t);if(tabEl)tabEl.classList.add('active');
+  ['d','s','t','l'].forEach(v=>{
+    var el=$('v-'+v);if(!el)return;
+    el.classList.remove('active','active-flex');
+    if(v===t){el.classList.add(v==='t'?'active-flex':'active')}
+  });
+}
+
+function startPolling(){refreshMetrics();setInterval(refreshMetrics,3000)}
+
+function refreshMetrics(){
+  fetch('/api/metrics?pin='+encodeURIComponent(pn)).then(r=>r.json()).then(d=>{
+    metricsData=d;
+    renderCards(d);
+    renderDisks(d.disks||[]);
+    renderPosture(d.scan);
+    renderScan(d.scan);
+  }).catch(()=>{});
+}
+
+function statusClass(v,lo,hi){return v<lo?'safe-text':v<hi?'warn-text':'danger-text'}
+
+function renderCards(d){
+  var m=$('mt');m.innerHTML='';
+  var rp=d.ramPercent||0;
+  var cards=[
+    {l:'CPU Usage',v:d.cpu+'%',s:statusClass(d.cpu,50,80),sub:'Processor utilization'},
+    {l:'RAM Usage',v:rp+'%',s:statusClass(rp,60,85),sub:Math.round(d.ramUsedMb/1024)+' / '+Math.round(d.ramTotalMb/1024)+' GB'},
+    {l:'Hostname',v:d.hostname||'N/A',s:'',sub:'Machine name',small:true},
+    {l:'Uptime',v:d.uptime||'N/A',s:'',sub:'System uptime',small:true}
+  ];
+  cards.forEach(c=>{
+    var div=document.createElement('div');div.className='mc';
+    div.innerHTML='<div class=""l"">'+esc(c.l)+'</div><div class=""v'+(c.s?' '+c.s:'')+'""'+(c.small?' style=""font-size:16px""':'')+'>'+esc(c.v)+'</div><div class=""sub"">'+esc(c.sub)+'</div>';
+    m.appendChild(div);
+  });
+}
+
+function renderDisks(disks){
+  var c=$('disks');c.innerHTML='';
+  disks.forEach(dk=>{
+    var pct=dk.percentUsed||0;
+    var col=pct<70?'var(--safe)':pct<85?'var(--warn)':'var(--danger)';
+    var d=document.createElement('div');d.className='disk-item';
+    d.innerHTML='<div class=""name"">'+esc(dk.name)+'</div><div class=""bar-track""><div class=""bar-fill"" style=""width:'+pct+'%;background:'+col+'""></div></div><div class=""info""><span>'+dk.usedGb+' GB used</span><span>'+dk.freeGb+' GB free / '+dk.totalGb+' GB</span></div>';
+    c.appendChild(d);
+  });
+}
+
+function renderPosture(scan){
+  if(!scan||scan.status!=='completed'){
+    $('p-safe').innerHTML='&#x2714; -- Passed';$('p-warn').innerHTML='&#x26a0;&#xfe0f; -- Warnings';$('p-danger').innerHTML='&#x2716; -- Danger';return;
+  }
+  $('p-safe').innerHTML='&#x2714; '+scan.safeCount+' Passed';
+  $('p-warn').innerHTML='&#x26a0;&#xfe0f; '+scan.warningCount+' Warning'+(scan.warningCount!==1?'s':'');
+  $('p-danger').innerHTML='&#x2716; '+scan.dangerCount+' Danger';
+}
+
+function renderScan(scan){
+  var c=$('scan-list');
+  if(!scan||scan.status!=='completed'||!scan.categories){
+    c.innerHTML='<div class=""scan-empty""><div class=""big"">&#x1f50d;</div><p>No scan results yet. Run a scan from the Dashboard.</p></div>';return;
+  }
+  var html='<div style=""margin-bottom:16px;font-size:13px;color:var(--muted)"">Scanned '+new Date(scan.timestamp).toLocaleString()+' &mdash; Overall: <strong class=""'+(scan.overall==='Safe'?'safe-text':scan.overall==='Warning'?'warn-text':'danger-text')+'"">'+ esc(scan.overall)+'</strong></div>';
+  scan.categories.forEach(cat=>{
+    html+='<div class=""scan-cat"" onclick=""this.classList.toggle(\'open\')"">';
+    html+='<div class=""scan-cat-hdr""><span class=""icon"">'+cat.icon+'</span><span class=""title"">'+ esc(cat.title)+'</span><span class=""badge badge-'+cat.status+'"">'+esc(cat.status)+'</span></div>';
+    html+='<div class=""scan-cat-body"">';
+    if(cat.findings&&cat.findings.length){
+      cat.findings.forEach(f=>{
+        html+='<div class=""finding""><span>'+esc(f.label)+'</span><span class=""fd '+(f.status==='Safe'?'safe-text':f.status==='Warning'?'warn-text':'danger-text')+'"">'+ esc(f.detail)+'</span></div>';
+      });
+    }
+    if(cat.tip)html+='<div class=""tip"">'+esc(cat.tip)+'</div>';
+    html+='</div></div>';
+  });
+  c.innerHTML=html;
+}
+
+function da(action,name){
+  var url='/api/action?pin='+encodeURIComponent(pn)+'&action='+encodeURIComponent(action);
+  if(name)url+='&name='+encodeURIComponent(name);
+  logEntry('Action: '+action+(name?' ('+name+')':''),'act');
+  toast('Running: '+action,'success');
+  fetch(url).then(r=>r.json()).then(d=>{
+    var msg=d.message||JSON.stringify(d);
+    logEntry('Result: '+msg,d.ok?'res':'err-log');
+    toast(msg,d.ok?'success':'error');
+    if(action==='scan')setTimeout(refreshMetrics,3000);
+  }).catch(e=>{logEntry('Error: '+e,'err-log');toast(''+e,'error')});
+}");
+        if (showTerminal)
+        {
+            sb.Append(@"
+function connectWS(){
+  var p=location.protocol==='https:'?'wss:':'ws:';
+  ws=new WebSocket(p+'//'+location.host+'/shell?pin='+encodeURIComponent(pn));
+  ws.onopen=function(){logEntry('Shell connected','act');$('cd').className='dot on';$('ct').textContent='Connected'};
+  ws.onmessage=function(e){var o=$('tout');o.textContent+=e.data;o.scrollTop=o.scrollHeight};
+  ws.onclose=function(){logEntry('Shell disconnected','err-log');$('cd').className='dot off';$('ct').textContent='Reconnecting...';setTimeout(connectWS,3000)};
+  ws.onerror=function(){};
+}
+function sendCmd(){
+  var i=$('tinp');if(!i.value.trim()||!ws||ws.readyState!==1)return;
+  var cmd=i.value;cmdHistory.unshift(cmd);histIdx=-1;
+  logEntry('$ '+cmd,'act');ws.send(cmd+'\n');i.value='';
+}");
+        }
+        sb.Append(@"
+function logEntry(msg,cls){
+  var log=$('slog');
+  if(log.querySelector('.log-empty'))log.innerHTML='';
+  var d=document.createElement('div');d.className='e';
+  var ts=document.createElement('span');ts.className='ts';ts.textContent=new Date().toLocaleTimeString();
+  var sp=document.createElement('span');sp.className=cls||'';sp.textContent=msg;
+  d.appendChild(ts);d.appendChild(sp);log.appendChild(d);
+  log.scrollTop=log.scrollHeight;
+}
+
+function esc(s){if(!s)return'';var d=document.createElement('div');d.textContent=s;return d.innerHTML}
+
+window.onload=function(){
+  var s=sessionStorage.getItem('pin');
+  if(s){$('pi').value=s;ck()}
+  var inp=$('tinp');
+  if(inp){
+    inp.addEventListener('keydown',function(e){
+      if(e.key==='Enter'){"); if (showTerminal) sb.Append("sendCmd();"); sb.Append(@"return}
+      if(e.key==='ArrowUp'&&cmdHistory.length){e.preventDefault();histIdx=Math.min(histIdx+1,cmdHistory.length-1);e.target.value=cmdHistory[histIdx]}
+      if(e.key==='ArrowDown'){e.preventDefault();histIdx=Math.max(histIdx-1,-1);e.target.value=histIdx>=0?cmdHistory[histIdx]:''}
+    });
+  }
+  $('pi').addEventListener('keydown',function(e){if(e.key==='Enter')ck()});
+};
+</script></body></html>");
+        return sb.ToString();
     }
 
     // ── WebSocket Shell ─────────────────────────────────────────
