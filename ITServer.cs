@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Sockets;
+using System.Security.Cryptography;
 using System.Text;
 
 namespace PCGuardian;
@@ -19,6 +20,7 @@ internal sealed class ITServer : IDisposable
 
     public int Port => _port;
     public bool IsRunning => _running;
+    public string? ActivePin { get; private set; }
 
     public string LocalUrl => $"http://{GetLocalIp()}:{_port}";
 
@@ -26,7 +28,17 @@ internal sealed class ITServer : IDisposable
     {
         if (_running) return;
         _port = port;
-        _pin = string.IsNullOrWhiteSpace(pin) ? null : pin.Trim();
+        if (string.IsNullOrWhiteSpace(pin))
+        {
+            // No PIN supplied — generate a random 6-digit PIN so the report
+            // is never exposed to the LAN without authentication.
+            _pin = new Random().Next(100000, 999999).ToString();
+        }
+        else
+        {
+            _pin = pin.Trim();
+        }
+        ActivePin = _pin;
 
         _listener = new HttpListener();
         _listener.Prefixes.Add($"http://+:{port}/");
@@ -104,7 +116,7 @@ internal sealed class ITServer : IDisposable
             if (_pin != null)
             {
                 var query = req.QueryString["pin"];
-                if (query != _pin)
+                if (!PinMatches(query, _pin))
                 {
                     // Show PIN entry page
                     var pinHtml = GeneratePinPage();
@@ -118,18 +130,32 @@ internal sealed class ITServer : IDisposable
             {
                 var html = ReportGenerator.ToHtml(_latestReport);
 
-                // Add a header banner for IT
-                html = html.Replace("<div class=\"header\">",
-                    "<div class=\"it-banner\">" +
-                    "\uD83D\uDD12 Shared by PC Guardian &middot; " +
-                    $"Live from {WebUtility.HtmlEncode(Environment.MachineName)} &middot; " +
-                    $"Scanned {_latestReport.Timestamp:h:mm tt}" +
-                    "</div><div class=\"header\">");
+                // Add a header banner for IT.
+                // Use IndexOf + Insert so only the first occurrence is modified,
+                // avoiding accidental replacement of later matches.
+                var headerTag = "<div class=\"header\">";
+                int headerIdx = html.IndexOf(headerTag, StringComparison.Ordinal);
+                if (headerIdx >= 0)
+                {
+                    var banner =
+                        "<div class=\"it-banner\">" +
+                        "\uD83D\uDD12 Shared by PC Guardian &middot; " +
+                        $"Live from {WebUtility.HtmlEncode(Environment.MachineName)} &middot; " +
+                        $"Scanned {_latestReport.Timestamp:h:mm tt}" +
+                        "</div>";
+                    html = html.Insert(headerIdx, banner);
+                }
 
-                // Inject IT banner style
-                html = html.Replace("</style>",
-                    ".it-banner { background: #1e40af; color: white; padding: 10px 20px; " +
-                    "font-size: 13px; border-radius: 8px; margin-bottom: 16px; }</style>");
+                // Inject IT banner style before the first </style> tag.
+                var styleClose = "</style>";
+                int styleIdx = html.IndexOf(styleClose, StringComparison.Ordinal);
+                if (styleIdx >= 0)
+                {
+                    var bannerCss =
+                        ".it-banner { background: #1e40af; color: white; padding: 10px 20px; " +
+                        "font-size: 13px; border-radius: 8px; margin-bottom: 16px; }";
+                    html = html.Insert(styleIdx, bannerCss);
+                }
 
                 WriteResponse(resp, html, 200);
             }
@@ -205,6 +231,17 @@ internal sealed class ITServer : IDisposable
         }
         catch { }
         return "127.0.0.1";
+    }
+
+    /// <summary>
+    /// Constant-time PIN comparison to prevent timing side-channel attacks.
+    /// </summary>
+    static bool PinMatches(string? submitted, string stored)
+    {
+        if (submitted is null) return false;
+        var a = Encoding.UTF8.GetBytes(submitted);
+        var b = Encoding.UTF8.GetBytes(stored);
+        return CryptographicOperations.FixedTimeEquals(a, b);
     }
 
     public void Dispose()

@@ -76,6 +76,7 @@ internal sealed class PerfService : IDisposable
         PrimeCounter(_diskRead);
         PrimeCounter(_diskWrite);
         PrimeGpuCounters();
+        _gpuEnumerateTick = -1;
 
         // Start timer; skip first tick via _tickCount starting at -1
         _tickCount = -1;
@@ -302,7 +303,12 @@ internal sealed class PerfService : IDisposable
         }
         catch (InvalidOperationException)
         {
-            // Category-level failure; re-enumerate next tick
+            lock (_lock)
+            {
+                if (_gpuCounters is not null)
+                    foreach (var c in _gpuCounters) try { c.Dispose(); } catch { }
+                _gpuCounters = null;
+            }
             return 0f;
         }
         catch

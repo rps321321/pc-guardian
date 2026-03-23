@@ -58,14 +58,21 @@ internal static class ScanEngine
         int size = 0;
 
         // First call to determine buffer size
-        uint ret = GetExtendedTcpTable(IntPtr.Zero, ref size, false, AF_INET, TCP_TABLE_OWNER_PID_ALL, 0);
+        GetExtendedTcpTable(IntPtr.Zero, ref size, false, AF_INET, TCP_TABLE_OWNER_PID_ALL, 0);
         if (size <= 0) return list;
 
-        var buf = Marshal.AllocHGlobal(size);
+        var buf = IntPtr.Zero;
         try
         {
-            if (GetExtendedTcpTable(buf, ref size, false, AF_INET, TCP_TABLE_OWNER_PID_ALL, 0) != 0)
-                return list;
+            uint ret;
+            int attempts = 0;
+            do
+            {
+                if (buf != IntPtr.Zero) Marshal.FreeHGlobal(buf);
+                buf = Marshal.AllocHGlobal(size);
+                ret = GetExtendedTcpTable(buf, ref size, false, AF_INET, TCP_TABLE_OWNER_PID_ALL, 0);
+            } while (ret == 122 && ++attempts < 5);
+            if (ret != 0) { Marshal.FreeHGlobal(buf); return list; }
 
             int count = Marshal.ReadInt32(buf);
             if (count <= 0 || count > 100_000) return list; // Sanity check
@@ -979,7 +986,7 @@ internal static class ScanEngine
                 "Provide a SystemMonitor instance for security posture analysis.");
         }
 
-        var posture = (SecurityPosture)monitor.GetSecurityPosture();
+        var posture = monitor.GetSecurityPosture();
 
         // BitLocker
         if (posture.BitLockerEnabled is null)

@@ -406,8 +406,8 @@ internal sealed class ActivityForm : Form
 
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
-        _refreshTimer.Stop();
         base.OnFormClosing(e);
+        if (!e.Cancel) _refreshTimer.Stop();
     }
 
     protected override void Dispose(bool disposing)

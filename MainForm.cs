@@ -43,6 +43,11 @@ internal sealed class MainForm : Form
     DashboardEngine? dashEngine;
     DashboardPanel? dashPanel;
 
+    // Modeless form instances (Bug 1: track to prevent handle leaks)
+    ActivityForm? activityForm;
+    NetworkForm? networkForm;
+    CpuGpuForm? cpuGpuForm;
+
     static readonly string[] ScanSteps =
     [
         "Checking if someone can control your screen...",
@@ -135,8 +140,8 @@ internal sealed class MainForm : Form
         viewIdle = new Panel { Dock = DockStyle.Fill, Visible = false, BackColor = Theme.BgPrimary };
         dashPanel = new DashboardPanel(dashEngine);
         dashPanel.ScanRequested += () => RunScan();
-        dashPanel.ActivityRequested += () => new ActivityForm(db).Show();
-        dashPanel.NetworkRequested += () => new NetworkForm().Show();
+        dashPanel.ActivityRequested += () => ShowActivityForm();
+        dashPanel.NetworkRequested += () => ShowNetworkForm();
         dashPanel.SettingsRequested += () => { using var f = new SettingsForm(settings, db, ApplySettings); f.ShowDialog(this); };
         dashPanel.FixRequested += ExecuteRecommendationFix;
         viewIdle.Controls.Add(dashPanel);
@@ -227,7 +232,7 @@ internal sealed class MainForm : Form
         var btnActivityR = MakeButton("\uD83D\uDCCA  Activity", 100, 34, Theme.BgCard);
         btnActivityR.Font = Theme.CardBody;
         btnActivityR.Location = new(222, 8);
-        btnActivityR.Click += (_, _) => new ActivityForm(db).Show();
+        btnActivityR.Click += (_, _) => ShowActivityForm();
         tip.SetToolTip(btnActivityR, "See what programs have been running on your PC\nand browse your past scan results.");
 
         var btnExport = MakeButton("\uD83D\uDCE4  Export", 90, 34, Theme.BgCard);
@@ -297,8 +302,6 @@ internal sealed class MainForm : Form
             // Guard: form may have been disposed while scan was running
             if (IsDisposed || !IsHandleCreated) return;
 
-            stepTimer.Stop();
-
             // Store report + save to DB + update IT server
             previousReport = lastReport;
             lastReport = report;
@@ -335,13 +338,13 @@ internal sealed class MainForm : Form
         catch (Exception ex)
         {
             if (IsDisposed || !IsHandleCreated) return;
-            stepTimer.Stop();
             ShowView("idle");
             MessageBox.Show($"Scan failed: {ex.Message}", "PC Guardian",
                 MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
         finally
         {
+            stepTimer.Stop();
             isScanning = false;
         }
     }
@@ -739,7 +742,8 @@ internal sealed class MainForm : Form
         }
         else
         {
-            itServer?.Stop();
+            itServer?.Dispose();
+            itServer = null;
         }
     }
 
@@ -812,6 +816,7 @@ internal sealed class MainForm : Form
                 "Running in the background. Right-click the tray icon for options.", ToolTipIcon.Info);
             return;
         }
+        realTimeMonitor?.Stop();
         tray.Visible = false;
         tray.Dispose();
         scanTimer.Stop();
@@ -861,21 +866,33 @@ internal sealed class MainForm : Form
                 break;
             case "stop-remote-apps":
                 action = "Stop remote access apps";
-                var remoteProcs = new[] { "teamviewer", "anydesk", "vnc", "parsec", "rustdesk" };
-                int killed = 0;
-                foreach (var proc in remoteProcs)
+                try
                 {
-                    var r = FixActions.KillProcess(proc);
-                    if (r.Success) killed++;
+                    var remoteProcs = new[] { "teamviewer", "anydesk", "vnc", "parsec", "rustdesk" };
+                    int killed = 0;
+                    foreach (var proc in remoteProcs)
+                    {
+                        var r = FixActions.KillProcess(proc);
+                        if (r.Success) killed++;
+                    }
+                    result = new FixResult(true, $"Stopped {killed} remote access process(es)");
                 }
-                result = new FixResult(true, $"Stopped {killed} remote access process(es)");
+                catch (Exception ex) { result = new FixResult(false, ex.Message); }
                 break;
             case "close-ports":
                 action = "Block risky ports";
-                var riskyPorts = new[] { (3389, "RDP"), (5900, "VNC"), (23, "Telnet") };
-                foreach (var (port, desc) in riskyPorts)
-                    FixActions.BlockPort(port, desc);
-                result = new FixResult(true, "Blocked RDP, VNC, and Telnet ports");
+                try
+                {
+                    var riskyPorts = new[] { (3389, "RDP"), (5900, "VNC"), (23, "Telnet") };
+                    int blocked = 0;
+                    foreach (var (port, desc) in riskyPorts)
+                    {
+                        var r = FixActions.BlockPort(port, desc);
+                        if (r.Success) blocked++;
+                    }
+                    result = new FixResult(blocked > 0, $"Blocked {blocked} of {riskyPorts.Length} risky port(s)");
+                }
+                catch (Exception ex) { result = new FixResult(false, ex.Message); }
                 break;
             case "fix-dns":
                 action = "Reset DNS to safe servers";
@@ -963,6 +980,7 @@ internal sealed class MainForm : Form
     void HandleAlert(SecurityAlert alert)
     {
         if (IsDisposed) return;
+        if (tray == null) return;
         SoundManager.Alert();
         tray.BalloonTipTitle = $"PC Guardian \u2014 {alert.Title}";
         tray.BalloonTipText = alert.Detail;
@@ -986,13 +1004,13 @@ internal sealed class MainForm : Form
                 ExportReport();
                 return true;
             case Keys.Control | Keys.L: // Ctrl+L = Activity Log
-                new ActivityForm(db).Show();
+                ShowActivityForm();
                 return true;
             case Keys.Control | Keys.N: // Ctrl+N = Network Monitor
-                new NetworkForm().Show();
+                ShowNetworkForm();
                 return true;
             case Keys.Control | Keys.H:
-                if (sysMonitor != null) new CpuGpuForm(sysMonitor, db).Show();
+                ShowCpuGpuForm();
                 return true;
             case Keys.Control | Keys.Oemcomma: // Ctrl+, = Settings
                 using (var f = new SettingsForm(settings, db, ApplySettings))
@@ -1031,17 +1049,42 @@ internal sealed class MainForm : Form
         base.Dispose(disposing);
     }
 
+    void ShowActivityForm()
+    {
+        if (activityForm != null && !activityForm.IsDisposed) { activityForm.Activate(); return; }
+        activityForm = new ActivityForm(db);
+        activityForm.FormClosed += (_, _) => activityForm = null;
+        activityForm.Show();
+    }
+
+    void ShowNetworkForm()
+    {
+        if (networkForm != null && !networkForm.IsDisposed) { networkForm.Activate(); return; }
+        networkForm = new NetworkForm();
+        networkForm.FormClosed += (_, _) => networkForm = null;
+        networkForm.Show();
+    }
+
+    void ShowCpuGpuForm()
+    {
+        if (sysMonitor == null) return;
+        if (cpuGpuForm != null && !cpuGpuForm.IsDisposed) { cpuGpuForm.Activate(); return; }
+        cpuGpuForm = new CpuGpuForm(sysMonitor, db);
+        cpuGpuForm.FormClosed += (_, _) => cpuGpuForm = null;
+        cpuGpuForm.Show();
+    }
+
     static Icon LoadAppIcon()
     {
         try
         {
             // Load from embedded resource — works in single-file publish
-            var stream = typeof(MainForm).Assembly.GetManifestResourceStream("guardian.ico");
+            using var stream = typeof(MainForm).Assembly.GetManifestResourceStream("guardian.ico");
             if (stream != null)
                 return new Icon(stream);
         }
         catch { }
-        return SystemIcons.Shield;
+        return new Icon(SystemIcons.Shield, SystemIcons.Shield.Size);
     }
 
     static Button MakeButton(string text, int w, int h, Color bg)

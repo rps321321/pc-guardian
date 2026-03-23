@@ -39,7 +39,7 @@ internal sealed class EventScanner
         List<(DateTime Time, int Id, string[] Props)> events;
         try
         {
-            events = QueryLog("Security", 4625, since, propIndices: [5]);
+            events = QueryLog("Security", 4625, since, propIndices: [5, 6]);
         }
         catch (UnauthorizedAccessException)
         {
@@ -62,7 +62,11 @@ internal sealed class EventScanner
         var byUser = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         foreach (var evt in events)
         {
+            // On newer Windows, Properties[5] may return a SID (starts with "S-1-")
+            // instead of the username. Fall back to index 6 in that case.
             var username = evt.Props[0] ?? "(unknown)";
+            if (username.StartsWith("S-1-", StringComparison.Ordinal))
+                username = evt.Props.Length > 1 ? evt.Props[1] ?? "(unknown)" : "(unknown)";
             byUser[username] = byUser.GetValueOrDefault(username) + 1;
         }
 
@@ -101,7 +105,7 @@ internal sealed class EventScanner
         List<(DateTime Time, int Id, string[] Props)> events;
         try
         {
-            events = QueryLog("Security", 4740, since, propIndices: [0, 4]);
+            events = QueryLog("Security", 4740, since, propIndices: [0]);
         }
         catch (UnauthorizedAccessException)
         {
@@ -129,10 +133,9 @@ internal sealed class EventScanner
         foreach (var evt in events)
         {
             var account = evt.Props[0] ?? "(unknown)";
-            var caller = evt.Props[1] ?? "(unknown)";
             findings.Add(new Finding(
                 "Locked Account",
-                $"{account} locked out (caller: {caller})",
+                $"{account} locked out",
                 Status.Danger));
         }
 
@@ -389,6 +392,10 @@ internal sealed class EventScanner
         catch (EventLogNotFoundException)
         {
             // Log not present on this machine — return empty.
+        }
+        catch (EventLogReadingException ex) when (ex.InnerException is UnauthorizedAccessException)
+        {
+            throw ex.InnerException;
         }
         catch (EventLogReadingException)
         {

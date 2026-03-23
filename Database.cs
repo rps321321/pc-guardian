@@ -50,17 +50,21 @@ internal sealed class Database : IDisposable
     {
         var c = new SqliteConnection(_connStr);
         c.Open();
-        using var pragma = c.CreateCommand();
-        pragma.CommandText = "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;";
-        pragma.ExecuteNonQuery();
+        using var pragma1 = c.CreateCommand();
+        pragma1.CommandText = "PRAGMA journal_mode=WAL;";
+        pragma1.ExecuteNonQuery();
+        using var pragma2 = c.CreateCommand();
+        pragma2.CommandText = "PRAGMA synchronous=NORMAL;";
+        pragma2.ExecuteNonQuery();
         return c;
     }
 
     public void Initialize()
     {
         using var db = Open();
-        using var cmd = db.CreateCommand();
-        cmd.CommandText = """
+        string[] statements =
+        [
+            """
             CREATE TABLE IF NOT EXISTS programs (
                 id        INTEGER PRIMARY KEY AUTOINCREMENT,
                 name      TEXT NOT NULL,
@@ -70,8 +74,9 @@ internal sealed class Database : IDisposable
                 first_seen TEXT NOT NULL,
                 last_seen  TEXT NOT NULL,
                 UNIQUE(name, path)
-            );
-
+            )
+            """,
+            """
             CREATE TABLE IF NOT EXISTS sessions (
                 id             INTEGER PRIMARY KEY AUTOINCREMENT,
                 program_id     INTEGER NOT NULL REFERENCES programs(id),
@@ -79,8 +84,9 @@ internal sealed class Database : IDisposable
                 started        TEXT NOT NULL,
                 ended          TEXT,
                 peak_memory_mb REAL
-            );
-
+            )
+            """,
+            """
             CREATE TABLE IF NOT EXISTS scan_history (
                 id             INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp      TEXT NOT NULL,
@@ -89,16 +95,18 @@ internal sealed class Database : IDisposable
                 warning_count  INTEGER,
                 danger_count   INTEGER,
                 details_json   TEXT
-            );
-
+            )
+            """,
+            """
             CREATE TABLE IF NOT EXISTS connections_log (
                 id             INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp      TEXT NOT NULL,
                 process_name   TEXT,
                 remote_address TEXT,
                 remote_port    INTEGER
-            );
-
+            )
+            """,
+            """
             CREATE TABLE IF NOT EXISTS hardware_metrics (
                 id             INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp      TEXT NOT NULL,
@@ -111,8 +119,9 @@ internal sealed class Database : IDisposable
                 battery_level  REAL,
                 battery_health REAL,
                 top_processes  TEXT
-            );
-
+            )
+            """,
+            """
             CREATE TABLE IF NOT EXISTS security_events (
                 id         INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp  TEXT NOT NULL,
@@ -121,24 +130,31 @@ internal sealed class Database : IDisposable
                 severity   TEXT NOT NULL,
                 detail     TEXT,
                 raw_data   TEXT
-            );
-
+            )
+            """,
+            """
             CREATE TABLE IF NOT EXISTS disk_space_log (
                 id         INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp  TEXT NOT NULL,
                 drive      TEXT NOT NULL,
                 total_gb   REAL,
                 free_gb    REAL
-            );
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS idx_sessions_pid_ended ON sessions(pid, ended)",
+            "CREATE INDEX IF NOT EXISTS idx_sessions_started ON sessions(started)",
+            "CREATE INDEX IF NOT EXISTS idx_scan_history_ts ON scan_history(timestamp)",
+            "CREATE INDEX IF NOT EXISTS idx_hw_ts ON hardware_metrics(timestamp)",
+            "CREATE INDEX IF NOT EXISTS idx_secevt_ts ON security_events(timestamp)",
+            "CREATE INDEX IF NOT EXISTS idx_diskspace_ts ON disk_space_log(timestamp)",
+        ];
 
-            CREATE INDEX IF NOT EXISTS idx_sessions_pid_ended ON sessions(pid, ended);
-            CREATE INDEX IF NOT EXISTS idx_sessions_started ON sessions(started);
-            CREATE INDEX IF NOT EXISTS idx_scan_history_ts ON scan_history(timestamp);
-            CREATE INDEX IF NOT EXISTS idx_hw_ts ON hardware_metrics(timestamp);
-            CREATE INDEX IF NOT EXISTS idx_secevt_ts ON security_events(timestamp);
-            CREATE INDEX IF NOT EXISTS idx_diskspace_ts ON disk_space_log(timestamp);
-            """;
-        cmd.ExecuteNonQuery();
+        foreach (var sql in statements)
+        {
+            using var cmd = db.CreateCommand();
+            cmd.CommandText = sql;
+            cmd.ExecuteNonQuery();
+        }
     }
 
     // ── Programs ────────────────────────────────────────────────────
@@ -204,7 +220,7 @@ internal sealed class Database : IDisposable
         using var db = Open();
         using var cmd = db.CreateCommand();
         cmd.CommandText = """
-            UPDATE sessions SET ended = @t, peak_memory_mb = @mem
+            UPDATE sessions SET ended = @t, peak_memory_mb = MAX(COALESCE(peak_memory_mb, 0), @mem)
             WHERE id = (
                 SELECT id FROM sessions WHERE pid = @pid AND ended IS NULL
                 ORDER BY started DESC LIMIT 1
@@ -573,17 +589,33 @@ internal sealed class Database : IDisposable
     public void PurgeAllData()
     {
         using var db = Open();
-        using var cmd = db.CreateCommand();
-        cmd.CommandText = """
-            DELETE FROM sessions;
-            DELETE FROM programs;
-            DELETE FROM scan_history;
-            DELETE FROM connections_log;
-            DELETE FROM hardware_metrics;
-            DELETE FROM security_events;
-            DELETE FROM disk_space_log;
-            """;
-        cmd.ExecuteNonQuery();
+        using var tx = db.BeginTransaction();
+        try
+        {
+            string[] tables =
+            [
+                "sessions",
+                "programs",
+                "scan_history",
+                "connections_log",
+                "hardware_metrics",
+                "security_events",
+                "disk_space_log",
+            ];
+            foreach (var table in tables)
+            {
+                using var cmd = db.CreateCommand();
+                cmd.Transaction = tx;
+                cmd.CommandText = $"DELETE FROM {table};";
+                cmd.ExecuteNonQuery();
+            }
+            tx.Commit();
+        }
+        catch
+        {
+            tx.Rollback();
+            throw;
+        }
 
         using var vacuum = db.CreateCommand();
         vacuum.CommandText = "VACUUM;";

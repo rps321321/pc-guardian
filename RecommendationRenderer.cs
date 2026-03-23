@@ -14,6 +14,14 @@ internal static class RecommendationRenderer
     private static readonly Font IconFont = new("Segoe UI", 10f);
     private static readonly Font EmptyFont = new("Segoe UI", 9f);
 
+    public static void DisposeResources()
+    {
+        DescFont.Dispose();
+        FixFont.Dispose();
+        IconFont.Dispose();
+        EmptyFont.Dispose();
+    }
+
     private const int MaxCards = 3;
     private const int CardHeight = 36;
     private const int CardGap = 4;

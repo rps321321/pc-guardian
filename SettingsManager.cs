@@ -36,7 +36,10 @@ internal static class SettingsManager
             File.WriteAllText(tmp, json);
             File.Move(tmp, FilePath, overwrite: true);
         }
-        catch { }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[SettingsManager] Save failed: {ex.Message}");
+        }
     }
 
     public static void SetStartWithWindows(bool enable)

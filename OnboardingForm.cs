@@ -232,10 +232,7 @@ internal sealed class OnboardingForm : Form
         _btnNext.Text = isLast ? "Get Started" : "Next \u2192";
         _btnNext.BackColor = Theme.Accent;
 
-        // Shift Next button left when Back is hidden so it stays right-aligned
-        _btnNext.Location = step == 0
-            ? new Point(398, 340)
-            : new Point(398, 340);
+        _btnNext.Location = new Point(398, 340);
     }
 
     // ── Helpers ────────────────────────────────────────────────

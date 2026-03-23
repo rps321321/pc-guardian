@@ -28,6 +28,8 @@ internal sealed record DriveHealth(
 
 internal sealed class WmiService : IDisposable
 {
+    private static readonly TimeSpan WmiTimeout = TimeSpan.FromSeconds(10);
+
     private readonly SystemStaticInfo _static;
     private readonly System.Threading.Timer _timer;
     private readonly object _lock = new();
@@ -53,6 +55,22 @@ internal sealed class WmiService : IDisposable
         lock (_lock) return _dynamic;
     }
 
+    // ── WMI searcher helpers (Bug 5: enforce 10s timeout) ───────────
+
+    private static ManagementObjectSearcher CreateSearcher(string query)
+    {
+        var searcher = new ManagementObjectSearcher(query);
+        searcher.Options.Timeout = WmiTimeout;
+        return searcher;
+    }
+
+    private static ManagementObjectSearcher CreateSearcher(string scope, string query)
+    {
+        var searcher = new ManagementObjectSearcher(scope, query);
+        searcher.Options.Timeout = WmiTimeout;
+        return searcher;
+    }
+
     // ── Static queries (run once) ───────────────────────────────────
 
     private static SystemStaticInfo QueryStaticInfo()
@@ -63,7 +81,7 @@ internal sealed class WmiService : IDisposable
 
         try
         {
-            using var searcher = new ManagementObjectSearcher(
+            using var searcher = CreateSearcher(
                 "SELECT Name, NumberOfCores, NumberOfLogicalProcessors, MaxClockSpeed FROM Win32_Processor");
             foreach (ManagementObject mo in searcher.Get())
             {
@@ -82,7 +100,7 @@ internal sealed class WmiService : IDisposable
         ulong totalRam = 0;
         try
         {
-            using var searcher = new ManagementObjectSearcher(
+            using var searcher = CreateSearcher(
                 "SELECT TotalVisibleMemorySize FROM Win32_OperatingSystem");
             foreach (ManagementObject mo in searcher.Get())
             {
@@ -99,7 +117,7 @@ internal sealed class WmiService : IDisposable
         DateTime bootTime = DateTime.MinValue;
         try
         {
-            using var searcher = new ManagementObjectSearcher(
+            using var searcher = CreateSearcher(
                 "SELECT Caption, Version, BuildNumber, OSArchitecture, LastBootUpTime FROM Win32_OperatingSystem");
             foreach (ManagementObject mo in searcher.Get())
             {
@@ -121,7 +139,7 @@ internal sealed class WmiService : IDisposable
         string biosVersion = "Unknown", biosMfr = "";
         try
         {
-            using var searcher = new ManagementObjectSearcher(
+            using var searcher = CreateSearcher(
                 "SELECT SMBIOSBIOSVersion, Manufacturer FROM Win32_BIOS");
             foreach (ManagementObject mo in searcher.Get())
             {
@@ -138,7 +156,7 @@ internal sealed class WmiService : IDisposable
         string boardMfr = "", boardProduct = "";
         try
         {
-            using var searcher = new ManagementObjectSearcher(
+            using var searcher = CreateSearcher(
                 "SELECT Manufacturer, Product FROM Win32_BaseBoard");
             foreach (ManagementObject mo in searcher.Get())
             {
@@ -156,7 +174,7 @@ internal sealed class WmiService : IDisposable
         string gpuDriver = "";
         try
         {
-            using var searcher = new ManagementObjectSearcher(
+            using var searcher = CreateSearcher(
                 "SELECT Name, DriverVersion FROM Win32_VideoController");
             foreach (ManagementObject mo in searcher.Get())
             {
@@ -197,10 +215,11 @@ internal sealed class WmiService : IDisposable
     {
         if (_disposed) return;
 
-        _tickCount++;
+        // Bug 2 fix: atomic increment to avoid data race on overlapping timer callbacks
+        int tick = Interlocked.Increment(ref _tickCount);
 
-        bool isDiskSpaceTick = _tickCount % 2 == 0;  // every 60s
-        bool isSmartTick = _tickCount % 10 == 0;      // every 5 min
+        bool isDiskSpaceTick = tick % 2 == 0;  // every 60s
+        bool isSmartTick = tick % 10 == 0;      // every 5 min
 
         float? temp = QueryThermalZone();
         var battery = QueryBattery();
@@ -219,7 +238,7 @@ internal sealed class WmiService : IDisposable
     {
         try
         {
-            using var searcher = new ManagementObjectSearcher(
+            using var searcher = CreateSearcher(
                 @"root\WMI",
                 "SELECT CurrentTemperature FROM MSAcpi_ThermalZoneTemperature");
 
@@ -251,7 +270,7 @@ internal sealed class WmiService : IDisposable
         // BatteryStaticData
         try
         {
-            using var searcher = new ManagementObjectSearcher(
+            using var searcher = CreateSearcher(
                 @"root\WMI",
                 "SELECT DesignedCapacity, ManufactureName FROM BatteryStaticData");
             foreach (ManagementObject mo in searcher.Get())
@@ -272,7 +291,7 @@ internal sealed class WmiService : IDisposable
         // BatteryFullChargedCapacity
         try
         {
-            using var searcher = new ManagementObjectSearcher(
+            using var searcher = CreateSearcher(
                 @"root\WMI",
                 "SELECT FullChargedCapacity FROM BatteryFullChargedCapacity");
             foreach (ManagementObject mo in searcher.Get())
@@ -289,7 +308,7 @@ internal sealed class WmiService : IDisposable
         // BatteryStatus
         try
         {
-            using var searcher = new ManagementObjectSearcher(
+            using var searcher = CreateSearcher(
                 @"root\WMI",
                 "SELECT Charging, Discharging, PowerOnline, RemainingCapacity, Voltage FROM BatteryStatus");
             foreach (ManagementObject mo in searcher.Get())
@@ -310,7 +329,7 @@ internal sealed class WmiService : IDisposable
         // BatteryCycleCount
         try
         {
-            using var searcher = new ManagementObjectSearcher(
+            using var searcher = CreateSearcher(
                 @"root\WMI",
                 "SELECT CycleCount FROM BatteryCycleCount");
             foreach (ManagementObject mo in searcher.Get())
@@ -324,9 +343,12 @@ internal sealed class WmiService : IDisposable
         }
         catch (ManagementException) { }
 
-        float chargePercent = fullChargeCap > 0
-            ? Math.Clamp((float)remainingCap / fullChargeCap * 100f, 0f, 100f)
-            : 0f;
+        // Bug 4 fix: if fullChargeCap is zero despite battery being present,
+        // WMI data is unreliable — return null to avoid false alarm (0% charge, 100% degradation).
+        if (fullChargeCap == 0)
+            return null;
+
+        float chargePercent = Math.Clamp((float)remainingCap / fullChargeCap * 100f, 0f, 100f);
 
         float degradation = designCap > 0
             ? Math.Clamp((1f - (float)fullChargeCap / designCap) * 100f, 0f, 100f)
@@ -365,16 +387,27 @@ internal sealed class WmiService : IDisposable
 
         foreach (var disk in physicalDisks)
         {
-            _cachedDiskSpace.TryGetValue(disk.DriveLetter, out var space);
-            _cachedSmart.TryGetValue(disk.Model, out var predictFailure);
+            // Bug 1 fix: S.M.A.R.T. InstanceName contains the model name as a substring;
+            // use Contains match instead of exact key lookup.
+            bool? predictFailure = null;
+            foreach (var kvp in _cachedSmart)
+            {
+                if (kvp.Key.Contains(disk.Model, StringComparison.OrdinalIgnoreCase))
+                {
+                    predictFailure = kvp.Value;
+                    break;
+                }
+            }
 
+            // Bug 3 fix: DriveLetter was always "" (dead code). Removed it from PhysicalDisk
+            // and the dead branch that checked disk.DriveLetter.Length > 0.
             results.Add(new DriveHealth(
-                Name: disk.DriveLetter.Length > 0 ? disk.DriveLetter : disk.FriendlyName,
+                Name: disk.FriendlyName,
                 Model: disk.FriendlyName,
                 MediaType: disk.MediaType,
                 BusType: disk.BusType,
                 SizeBytes: disk.SizeBytes,
-                FreeBytes: space.Free,
+                FreeBytes: 0,
                 HealthStatus: disk.HealthStatus,
                 PredictFailure: predictFailure));
         }
@@ -383,9 +416,10 @@ internal sealed class WmiService : IDisposable
         return results;
     }
 
+    // Bug 3 fix: removed DriveLetter field — it was never populated.
     private record PhysicalDisk(
         string FriendlyName, string Model, string HealthStatus, string MediaType,
-        string BusType, long SizeBytes, string DriveLetter);
+        string BusType, long SizeBytes);
 
     private static List<PhysicalDisk> QueryPhysicalDisks()
     {
@@ -393,7 +427,7 @@ internal sealed class WmiService : IDisposable
 
         try
         {
-            using var searcher = new ManagementObjectSearcher(
+            using var searcher = CreateSearcher(
                 @"root\Microsoft\Windows\Storage",
                 "SELECT FriendlyName, HealthStatus, MediaType, BusType, Size FROM MSFT_PhysicalDisk");
 
@@ -429,7 +463,7 @@ internal sealed class WmiService : IDisposable
                         _ => $"Other ({bus})"
                     };
 
-                    disks.Add(new PhysicalDisk(name, name, healthStr, mediaStr, busStr, size, ""));
+                    disks.Add(new PhysicalDisk(name, name, healthStr, mediaStr, busStr, size));
                 }
             }
         }
@@ -463,7 +497,7 @@ internal sealed class WmiService : IDisposable
 
         try
         {
-            using var searcher = new ManagementObjectSearcher(
+            using var searcher = CreateSearcher(
                 @"root\WMI",
                 "SELECT InstanceName, PredictFailure FROM MSStorageDriver_FailurePredictStatus");
 

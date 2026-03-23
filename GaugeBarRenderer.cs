@@ -13,6 +13,12 @@ internal static class GaugeBarRenderer
     private static readonly Font LabelFont = new("Segoe UI", 9f);
     private static readonly Font ValueFont = new("Segoe UI Semibold", 9f);
 
+    public static void DisposeResources()
+    {
+        LabelFont.Dispose();
+        ValueFont.Dispose();
+    }
+
     private const int LabelWidth = 48;
     private const int DefaultValueWidth = 72;
     private const int TrackHeight = 12;

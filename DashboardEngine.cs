@@ -67,7 +67,7 @@ internal sealed class DashboardEngine : IDisposable
     Report? _lastReport;
     DateTime? _lastScanTime;
     DateTime _highCpuStart = DateTime.MinValue;
-    bool _disposed;
+    volatile bool _disposed;
 
     /// <summary>Fires when a new <see cref="DashboardState"/> is computed.</summary>
     public event Action<DashboardState>? StateChanged;

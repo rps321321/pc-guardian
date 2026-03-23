@@ -143,11 +143,18 @@ internal static class MinerDetector
         GetExtendedTcpTable(IntPtr.Zero, ref size, false, AF_INET, TCP_TABLE_OWNER_PID_ALL, 0);
         if (size <= 0) return list;
 
-        var buf = Marshal.AllocHGlobal(size);
+        var buf = IntPtr.Zero;
         try
         {
-            if (GetExtendedTcpTable(buf, ref size, false, AF_INET, TCP_TABLE_OWNER_PID_ALL, 0) != 0)
-                return list;
+            uint ret;
+            int attempts = 0;
+            do
+            {
+                if (buf != IntPtr.Zero) Marshal.FreeHGlobal(buf);
+                buf = Marshal.AllocHGlobal(size);
+                ret = GetExtendedTcpTable(buf, ref size, false, AF_INET, TCP_TABLE_OWNER_PID_ALL, 0);
+            } while (ret == 122 && ++attempts < 5);
+            if (ret != 0) { Marshal.FreeHGlobal(buf); return list; }
 
             int count = Marshal.ReadInt32(buf);
             if (count <= 0 || count > 100_000) return list;
@@ -370,7 +377,7 @@ internal static class MinerDetector
         // --- Network connections ---
         var conns = connsByPid[(uint)info.Pid];
         bool hasPoolPort = false;
-        bool hasPoolDomainConn = false;
+        bool hasPoolDomainConn = cmdLine.Length > 0 && HasPoolDomain(cmdLine);
 
         foreach (var conn in conns)
         {
@@ -384,8 +391,7 @@ internal static class MinerDetector
             reasons.Add("Connection to known mining pool port (+20)");
         }
 
-        // Check command line for pool domain references (network DNS not available here)
-        if (cmdLine.Length > 0 && HasPoolDomain(cmdLine))
+        if (hasPoolDomainConn)
         {
             score += 30;
             reasons.Add("Mining pool domain in command line (+30)");

@@ -49,11 +49,13 @@ namespace PCGuardian
             float cx = bounds.X + bounds.Width / 2f;
             float cy = bounds.Y + bounds.Height / 2f;
 
+            float scoreNumberHeight;
             using (var scoreFontLarge = new Font("Segoe UI", 36f, FontStyle.Bold, GraphicsUnit.Point))
             using (var whiteBrush = new SolidBrush(Color.White))
             {
                 string scoreText = ((int)(score * easedProgress)).ToString();
                 var numberSize = g.MeasureString(scoreText, scoreFontLarge);
+                scoreNumberHeight = numberSize.Height;
                 float numberX = cx - numberSize.Width / 2f;
                 float numberY = cy - numberSize.Height / 2f - 12f;
                 g.DrawString(scoreText, scoreFontLarge, whiteBrush, numberX, numberY);
@@ -62,12 +64,9 @@ namespace PCGuardian
             using (var gradeFont = new Font("Segoe UI Semibold", 14f, FontStyle.Regular, GraphicsUnit.Point))
             using (var gradeBrush = new SolidBrush(scoreColor))
             {
-                // Measure the large score font to position grade below it
-                using var measureFont = new Font("Segoe UI", 36f, FontStyle.Bold, GraphicsUnit.Point);
-                var numberHeight = g.MeasureString("0", measureFont).Height;
                 var gradeSize = g.MeasureString(grade, gradeFont);
                 float gradeX = cx - gradeSize.Width / 2f;
-                float gradeY = cy - 12f + numberHeight / 2f + 8f;
+                float gradeY = cy - 12f + scoreNumberHeight / 2f + 8f;
                 g.DrawString(grade, gradeFont, gradeBrush, gradeX, gradeY);
             }
 

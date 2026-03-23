@@ -143,8 +143,8 @@ internal static class AdminHelper
                 CreateNoWindow = true,
             };
             proc.Start();
+            _ = proc.StandardError.ReadToEndAsync();
             var output = proc.StandardOutput.ReadToEnd();
-            proc.StandardError.ReadToEnd();
             proc.WaitForExit(10_000);
             return output;
         }

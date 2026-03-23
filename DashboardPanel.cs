@@ -77,8 +77,10 @@ internal sealed class DashboardPanel : UserControl
 
     void OnEngineStateChanged(DashboardState newState)
     {
+        if (!IsHandleCreated || IsDisposed) return;
         BeginInvoke(() =>
         {
+            if (IsDisposed) return;
             _state = newState;
             PushScoreHistory(newState.ThreatScore);
             _hasDangerTiles = newState.Tiles?.Any(t => t.Status == Status.Danger) == true;
@@ -126,6 +128,7 @@ internal sealed class DashboardPanel : UserControl
 
     public void UpdateState(DashboardState state)
     {
+        if (InvokeRequired) { BeginInvoke(() => UpdateState(state)); return; }
         _state = state;
         PushScoreHistory(state.ThreatScore);
         _hasDangerTiles = state.Tiles?.Any(t => t.Status == Status.Danger) == true;
@@ -491,6 +494,9 @@ internal sealed class DashboardPanel : UserControl
             _engine.StateChanged -= OnEngineStateChanged;
             _animTimer.Stop();
             _animTimer.Dispose();
+            GaugeBarRenderer.DisposeResources();
+            RecommendationRenderer.DisposeResources();
+            QuickActionRenderer.DisposeResources();
         }
         base.Dispose(disposing);
     }

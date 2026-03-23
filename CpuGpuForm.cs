@@ -839,7 +839,6 @@ internal sealed class CpuGpuForm : Form
 
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
-        _monitor.Updated -= OnMonitorUpdated;
         base.OnFormClosing(e);
     }
 

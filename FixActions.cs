@@ -124,6 +124,9 @@ internal static class FixActions
             if (!AdminHelper.IsAdmin())
                 return new(false, "Administrator privileges required to modify firewall rules.");
 
+            if (!System.Text.RegularExpressions.Regex.IsMatch(ruleName, @"^[\w\- ]+$"))
+                return new FixResult(false, "Invalid rule name.");
+
             var output = RunCommand("netsh",
                 $"advfirewall firewall delete rule name=\"{ruleName}\"");
 

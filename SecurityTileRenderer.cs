@@ -101,7 +101,7 @@ namespace PCGuardian
                 Color textColor = tile.Status == Status.Danger ? Color.White : statusColor;
                 using (var textBrush = new SolidBrush(textColor))
                 {
-                    var sf = new StringFormat
+                    using var sf = new StringFormat
                     {
                         Alignment = StringAlignment.Center,
                         LineAlignment = StringAlignment.Center,

@@ -69,12 +69,18 @@ internal sealed class CorrelationEngine
 
     public void Ingest(SecurityEvent evt)
     {
+        List<CorrelationAlert> newAlerts;
+
         lock (_lock)
         {
+            EvictOldAlerts();
             _buffer.AddLast(evt);
             TrimBuffer();
-            EvaluateRules(evt);
+            newAlerts = EvaluateRules(evt);
         }
+
+        foreach (var alert in newAlerts)
+            AlertFired?.Invoke(alert);
     }
 
     public List<CorrelationAlert> GetActiveAlerts()
@@ -87,8 +93,10 @@ internal sealed class CorrelationEngine
 
     // ── Rule evaluation ──────────────────────────────────────────────────
 
-    private void EvaluateRules(SecurityEvent latestEvent)
+    private List<CorrelationAlert> EvaluateRules(SecurityEvent latestEvent)
     {
+        var newAlerts = new List<CorrelationAlert>();
+
         foreach (var rule in _rules)
         {
             var windowStart = latestEvent.Timestamp - rule.Window;
@@ -117,8 +125,10 @@ internal sealed class CorrelationEngine
                 LastEvent: chain[^1].Timestamp);
 
             _activeAlerts.Add(alert);
-            AlertFired?.Invoke(alert);
+            newAlerts.Add(alert);
         }
+
+        return newAlerts;
     }
 
     /// <summary>
@@ -156,7 +166,7 @@ internal sealed class CorrelationEngine
             var allSame = true;
             for (var i = 0; i < chain.Count; i++)
             {
-                if (!ReferenceEquals(existing.EventChain[i], chain[i]))
+                if (!existing.EventChain[i].Equals(chain[i]))
                 {
                     allSame = false;
                     break;
@@ -173,6 +183,17 @@ internal sealed class CorrelationEngine
     {
         while (_buffer.Count > MaxBufferSize)
             _buffer.RemoveFirst();
+    }
+
+    private void EvictOldAlerts()
+    {
+        const int maxActiveAlerts = 1000;
+        var cutoff = DateTime.UtcNow - TimeSpan.FromHours(1);
+
+        _activeAlerts.RemoveAll(a => a.LastEvent < cutoff);
+
+        if (_activeAlerts.Count > maxActiveAlerts)
+            _activeAlerts.RemoveRange(0, _activeAlerts.Count - maxActiveAlerts);
     }
 
     // ── Default rules ────────────────────────────────────────────────────

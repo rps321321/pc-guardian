@@ -18,6 +18,11 @@ internal static class QuickActionRenderer
 
     private static readonly Font ButtonFont = new("Segoe UI Semibold", 9f);
 
+    public static void DisposeResources()
+    {
+        ButtonFont.Dispose();
+    }
+
     public static void Draw(Graphics g, Rectangle bounds, int hoveredIndex)
     {
         g.SmoothingMode = SmoothingMode.AntiAlias;

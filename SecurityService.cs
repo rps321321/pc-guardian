@@ -83,10 +83,14 @@ internal sealed class SecurityService
                 @"root\CIMV2\Security\MicrosoftVolumeEncryption",
                 "SELECT ProtectionStatus FROM Win32_EncryptableVolume WHERE DriveLetter='C:'");
 
-            foreach (ManagementObject obj in searcher.Get())
+            using var results = searcher.Get();
+            foreach (ManagementObject obj in results)
             {
-                var status = Convert.ToInt32(obj["ProtectionStatus"]);
-                return status == 1; // 0=OFF, 1=ON
+                using (obj)
+                {
+                    var status = Convert.ToInt32(obj["ProtectionStatus"]);
+                    return status == 1; // 0=OFF, 1=ON
+                }
             }
 
             return false;
@@ -126,16 +130,20 @@ internal sealed class SecurityService
                 @"root\CIMV2\Security\MicrosoftTpm",
                 "SELECT IsActivated_InitialValue, IsEnabled_InitialValue, SpecVersion FROM Win32_Tpm");
 
-            foreach (ManagementObject obj in searcher.Get())
+            using var tpmResults = searcher.Get();
+            foreach (ManagementObject obj in tpmResults)
             {
-                var isActivated = obj["IsActivated_InitialValue"] is true;
-                var isEnabled = obj["IsEnabled_InitialValue"] is true;
-                var specVersion = obj["SpecVersion"]?.ToString();
+                using (obj)
+                {
+                    var isActivated = obj["IsActivated_InitialValue"] is true;
+                    var isEnabled = obj["IsEnabled_InitialValue"] is true;
+                    var specVersion = obj["SpecVersion"]?.ToString();
 
-                // SpecVersion looks like "2.0, 0, 1.59" — take first segment
-                var version = specVersion?.Split(',').FirstOrDefault()?.Trim();
+                    // SpecVersion looks like "2.0, 0, 1.59" — take first segment
+                    var version = specVersion?.Split(',').FirstOrDefault()?.Trim();
 
-                return (isActivated && isEnabled, version);
+                    return (isActivated && isEnabled, version);
+                }
             }
 
             return (false, null);
@@ -187,6 +195,8 @@ internal sealed class SecurityService
     // 6. Password Policy (no admin) — parse net.exe accounts
     // -----------------------------------------------------------------------
 
+    // NOTE: "net accounts" output labels are locale-dependent.
+    // This parsing only works reliably on English-locale Windows systems.
     static (int MinLength, int LockoutThreshold) CheckPasswordPolicy()
     {
         try
@@ -194,6 +204,13 @@ internal sealed class SecurityService
             var output = Run("net.exe", "accounts");
             var minLen = ParseNetAccountsInt(output, "Minimum password length");
             var lockout = ParseNetAccountsInt(output, "Lockout threshold");
+
+            if (minLen == 0 && lockout == 0 && !string.IsNullOrWhiteSpace(output))
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    "[SecurityService] Warning: no values parsed from 'net accounts' — " +
+                    "output may be in a non-English locale.");
+            }
 
             return (minLen, lockout);
         }
@@ -234,10 +251,14 @@ internal sealed class SecurityService
             using var searcher = new ManagementObjectSearcher(
                 "SELECT Disabled FROM Win32_UserAccount WHERE LocalAccount=True AND Name='Guest'");
 
-            foreach (ManagementObject obj in searcher.Get())
+            using var guestResults = searcher.Get();
+            foreach (ManagementObject obj in guestResults)
             {
-                var disabled = obj["Disabled"] is true;
-                return !disabled; // true = guest is enabled (danger)
+                using (obj)
+                {
+                    var disabled = obj["Disabled"] is true;
+                    return !disabled; // true = guest is enabled (danger)
+                }
             }
 
             return null;
