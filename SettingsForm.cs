@@ -20,6 +20,7 @@ internal sealed class SettingsForm : Form
 
     // IT Sharing
     CheckBox chkITSharing = null!;
+    CheckBox chkTunnel = null!;
     TextBox txtPin = null!;
     Label lblShareUrl = null!;
     string? _tunnelUrl;
@@ -112,6 +113,9 @@ internal sealed class SettingsForm : Form
 
         chkITSharing = AddCheckbox(scroll, "Let your IT team view results remotely", left, ref y,
             "Turn this on and your IT person can see your\nscan results from their own computer \u2014 just by\nopening a link. No software needed on their end.");
+
+        chkTunnel = AddCheckbox(scroll, "Enable remote access (via secure tunnel)", left, ref y,
+            "Creates a secure tunnel so your IT person can\naccess your PC from anywhere on the internet \u2014\nnot just your local network. Free and encrypted.");
 
         // PIN
         var lblPin = new Label
@@ -413,6 +417,7 @@ internal sealed class SettingsForm : Form
             7 => 0, 30 => 1, 90 => 2, 365 => 3, _ => 4,
         };
         chkITSharing.Checked = _settings.ITSharingEnabled;
+        chkTunnel.Checked = _settings.TunnelEnabled;
         txtPin.Text = _settings.ITSharingPin;
     }
 
@@ -436,6 +441,7 @@ internal sealed class SettingsForm : Form
             0 => 7, 1 => 30, 2 => 90, 3 => 365, _ => 0,
         };
         _settings.ITSharingEnabled = chkITSharing.Checked;
+        _settings.TunnelEnabled = chkTunnel.Checked;
         _settings.ITSharingPin = txtPin.Text.Trim();
 
         // Use scheduled task (admin auto-start) when running as admin,
