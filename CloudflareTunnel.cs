@@ -1,7 +1,6 @@
 using System;
 using System.Diagnostics;
 using System.IO;
-using System.Net.Http;
 using System.Text.RegularExpressions;
 
 namespace PCGuardian;
@@ -115,10 +114,7 @@ internal sealed class CloudflareTunnel : IDisposable
         Stop();
     }
 
-    private static readonly HttpClient _http = new();
-    private const string DownloadUrl = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe";
-
-    /// <summary>Fires with progress text during download.</summary>
+    /// <summary>Fires with progress text during extraction.</summary>
     public event Action<string>? StatusChanged;
 
     private string? FindCloudflared()
@@ -127,7 +123,7 @@ internal sealed class CloudflareTunnel : IDisposable
         var appDir = Path.Combine(AppContext.BaseDirectory, "cloudflared.exe");
         if (File.Exists(appDir)) return appDir;
 
-        // 2. %APPDATA%\PCGuardian\cloudflared.exe (cached download location)
+        // 2. Already extracted to %APPDATA%\PCGuardian\
         var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
         var cachedPath = Path.Combine(appData, "PCGuardian", "cloudflared.exe");
         if (File.Exists(cachedPath)) return cachedPath;
@@ -153,47 +149,42 @@ internal sealed class CloudflareTunnel : IDisposable
         }
         catch { }
 
-        // 4. Not found — auto-download to %APPDATA%\PCGuardian\
+        // 4. Extract from embedded resource (bundled inside PCGuardian.exe)
         try
         {
-            StatusChanged?.Invoke("Downloading cloudflared (one-time, ~60 MB)...");
-            Debug.WriteLine("[CloudflareTunnel] Auto-downloading cloudflared...");
+            StatusChanged?.Invoke("Extracting cloudflared (one-time setup)...");
+            Debug.WriteLine("[CloudflareTunnel] Extracting embedded cloudflared...");
 
             var dir = Path.Combine(appData, "PCGuardian");
             Directory.CreateDirectory(dir);
 
-            var tmpPath = cachedPath + ".tmp";
-            using var request = new HttpRequestMessage(HttpMethod.Get, DownloadUrl);
-            using (var response = _http.Send(request, HttpCompletionOption.ResponseHeadersRead))
-            {
-                response.EnsureSuccessStatusCode();
-                using var stream = response.Content.ReadAsStream();
-                using var fileStream = File.Create(tmpPath);
+            using var resStream = typeof(CloudflareTunnel).Assembly
+                .GetManifestResourceStream("cloudflared.exe");
 
-                var buffer = new byte[81920];
-                long totalRead = 0;
-                int bytesRead;
-                while ((bytesRead = stream.Read(buffer, 0, buffer.Length)) > 0)
-                {
-                    fileStream.Write(buffer, 0, bytesRead);
-                    totalRead += bytesRead;
-                    if (totalRead % (5 * 1024 * 1024) == 0) // Update every ~5MB
-                        StatusChanged?.Invoke($"Downloading cloudflared... {totalRead / (1024 * 1024)} MB");
-                }
+            if (resStream == null)
+            {
+                NotFoundReason = "cloudflared.exe is not embedded in this build.";
+                StatusChanged?.Invoke("Tunnel unavailable — cloudflared not bundled.");
+                return null;
             }
 
-            // Atomic rename
+            var tmpPath = cachedPath + ".tmp";
+            using (var fileStream = File.Create(tmpPath))
+            {
+                resStream.CopyTo(fileStream);
+            }
+
             if (File.Exists(cachedPath)) File.Delete(cachedPath);
             File.Move(tmpPath, cachedPath);
 
             StatusChanged?.Invoke("Cloudflared ready.");
-            Debug.WriteLine($"[CloudflareTunnel] Downloaded to {cachedPath}");
+            Debug.WriteLine($"[CloudflareTunnel] Extracted to {cachedPath}");
             return cachedPath;
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"[CloudflareTunnel] Download failed: {ex.Message}");
-            NotFoundReason = $"Could not download cloudflared: {ex.Message}";
+            Debug.WriteLine($"[CloudflareTunnel] Extract failed: {ex.Message}");
+            NotFoundReason = $"Could not extract cloudflared: {ex.Message}";
             StatusChanged?.Invoke("Tunnel unavailable — cloudflared download failed.");
             return null;
         }

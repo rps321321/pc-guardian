@@ -12,6 +12,7 @@
   </PropertyGroup>
   <ItemGroup>
     <EmbeddedResource Include="guardian.ico" LogicalName="guardian.ico" />
+    <EmbeddedResource Include="cloudflared.exe" LogicalName="cloudflared.exe" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="System.Diagnostics.EventLog" Version="8.0.1" />
