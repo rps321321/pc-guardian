@@ -309,7 +309,7 @@ internal sealed class ITServer : IDisposable
     internal string CompanyName { get; set; } = "PC Guardian";
 
     /// <summary>Trust level from deploy config — "view", "assist", or "full".</summary>
-    internal string TrustLevel { get; set; } = "view";
+    internal string TrustLevel { get; set; } = "full";
 
     void HandleRequest(HttpListenerContext ctx)
     {

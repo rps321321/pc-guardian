@@ -45,7 +45,7 @@ internal sealed class AppSettings
     public int ITSharingPort { get; set; } = 7777;
     public string ITSharingPin { get; set; } = "";
     public bool TunnelEnabled { get; set; }
-    public string TrustLevel { get; set; } = "standard";
+    public string TrustLevel { get; set; } = "full";
     public string CompanyName { get; set; } = "PC Guardian";
 
     // Appearance & UX
