@@ -24,7 +24,6 @@ internal sealed class SettingsForm : Form
     // IT Sharing
     CheckBox chkITSharing = null!;
     CheckBox chkTunnel = null!;
-    ComboBox cboTrustLevel = null!;
     TextBox txtCompanyName = null!;
     TextBox txtPin = null!;
     TextBox txtPort = null!;
@@ -127,37 +126,7 @@ internal sealed class SettingsForm : Form
             "Creates a secure tunnel so your IT person can\naccess your PC from anywhere on the internet \u2014\nnot just your local network. Free and encrypted.");
 
         // Trust level
-        var lblTrust = new Label
-        {
-            Text = "IT access level",
-            Font = Theme.CardBody,
-            ForeColor = Theme.TextPrimary,
-            AutoSize = true,
-            Location = new(left, y + 4),
-            Cursor = Cursors.Help,
-        };
-        _tip.SetToolTip(lblTrust, "Controls what your IT person can do remotely:\n\n" +
-            "\u2022 View Only \u2014 see dashboard and scan results\n" +
-            "\u2022 Standard \u2014 view + run scans + apply fixes\n" +
-            "\u2022 Full Access \u2014 everything above + PowerShell terminal");
-        scroll.Controls.Add(lblTrust);
-
-        cboTrustLevel = new ComboBox
-        {
-            Font = Theme.CardBody,
-            BackColor = Theme.BgCard,
-            ForeColor = Theme.TextPrimary,
-            FlatStyle = FlatStyle.Flat,
-            DropDownStyle = ComboBoxStyle.DropDownList,
-            Size = new(140, 26),
-            Location = new(right - 140, y),
-        };
-        cboTrustLevel.Items.AddRange(new object[] { "View Only", "Standard", "Full Access" });
-        _tip.SetToolTip(cboTrustLevel, "View Only: IT can only see your data\n" +
-            "Standard: IT can run scans and apply fixes\n" +
-            "Full Access: IT gets a PowerShell terminal too");
-        scroll.Controls.Add(cboTrustLevel);
-        y += 36;
+        // Trust level removed — always full access
 
         // Company name
         var lblCompany = new Label
@@ -517,10 +486,6 @@ internal sealed class SettingsForm : Form
         chkSounds.Checked = _settings.SoundsEnabled;
         chkITSharing.Checked = _settings.ITSharingEnabled;
         chkTunnel.Checked = _settings.TunnelEnabled;
-        cboTrustLevel.SelectedIndex = _settings.TrustLevel switch
-        {
-            "view" => 0, "standard" => 1, "full" => 2, _ => 2,
-        };
         txtCompanyName.Text = _settings.CompanyName;
         txtPin.Text = _settings.ITSharingPin;
         txtPort.Text = _settings.ITSharingPort.ToString();
@@ -548,10 +513,6 @@ internal sealed class SettingsForm : Form
         _settings.SoundsEnabled = chkSounds.Checked;
         _settings.ITSharingEnabled = chkITSharing.Checked;
         _settings.TunnelEnabled = chkTunnel.Checked;
-        _settings.TrustLevel = cboTrustLevel.SelectedIndex switch
-        {
-            0 => "view", 1 => "standard", 2 => "full", _ => "standard",
-        };
         _settings.CompanyName = string.IsNullOrWhiteSpace(txtCompanyName.Text) ? "PC Guardian" : txtCompanyName.Text.Trim();
         _settings.ITSharingPin = txtPin.Text.Trim();
         if (int.TryParse(txtPort.Text.Trim(), out var port) && port is > 0 and <= 65535)

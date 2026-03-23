@@ -179,13 +179,7 @@ internal sealed class ITServer : IDisposable
             return;
         }
 
-        // Trust level check — shell requires "full"
-        if (TrustLevel != "full")
-        {
-            ctx.Response.StatusCode = 403;
-            ctx.Response.Close();
-            return;
-        }
+        // Full access always enabled
 
         // Bug 7: Guard against multiple simultaneous shells (atomic check-then-set)
         if (Interlocked.CompareExchange(ref _shellActiveInt, 1, 0) != 0)
@@ -308,8 +302,7 @@ internal sealed class ITServer : IDisposable
     /// <summary>Company name shown in the terminal page header.</summary>
     internal string CompanyName { get; set; } = "PC Guardian";
 
-    /// <summary>Trust level from deploy config — "view", "assist", or "full".</summary>
-    internal string TrustLevel { get; set; } = "full";
+    // Full access is always enabled — no trust level gating
 
     void HandleRequest(HttpListenerContext ctx)
     {
@@ -322,7 +315,7 @@ internal sealed class ITServer : IDisposable
             // ── /terminal — self-contained IT terminal page (PIN handled client-side) ──
             if (path.Equals("/terminal", StringComparison.OrdinalIgnoreCase))
             {
-                var html = GenerateTerminalPage(CompanyName, TrustLevel);
+                var html = GenerateTerminalPage(CompanyName);
                 WriteResponse(resp, html, 200);
                 return;
             }
@@ -637,10 +630,10 @@ internal sealed class ITServer : IDisposable
 
     // ── IT Terminal Page ───────────────────────────────────────
 
-    static string GenerateTerminalPage(string company, string trustLevel)
+    static string GenerateTerminalPage(string company)
     {
         var safeCompany = WebUtility.HtmlEncode(company);
-        var showTerminal = trustLevel == "full";
+        const bool showTerminal = true; // Always full access
         var sb = new StringBuilder(32000);
         sb.Append(@"<!DOCTYPE html><html lang=""en""><head><meta charset=""utf-8""><meta name=""viewport"" content=""width=device-width,initial-scale=1"">
 <title>"); sb.Append(safeCompany); sb.Append(@" - Remote Support</title>
