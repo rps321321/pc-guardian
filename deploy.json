@@ -1,0 +1,10 @@
+{
+  "Company": "PC Guardian",
+  "Pin": "guardian2026",
+  "TunnelEnabled": true,
+  "TrustLevel": "full",
+  "ShowTrayIcon": true,
+  "ShowMainWindow": true,
+  "ContactUrl": null,
+  "ContactPhone": null
+}

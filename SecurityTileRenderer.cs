@@ -132,13 +132,18 @@ namespace PCGuardian
         {
             int count = Math.Min(tiles.Count, Cols * Rows);
 
+            // Dynamic tile sizing — fill the full bounds width
+            int gapX = 8, gapY = 10;
+            int tileW = (bounds.Width - (Cols - 1) * gapX) / Cols;
+            int tileH = (bounds.Height - gapY) / Rows;
+
             for (int i = 0; i < count; i++)
             {
                 int col = i % Cols;
                 int row = i / Cols;
 
-                float x = bounds.X + col * (TileW + GapX);
-                float y = bounds.Y + row * (TileH + GapY);
+                float x = bounds.X + col * (tileW + gapX);
+                float y = bounds.Y + row * (tileH + gapY);
 
                 var tile = tiles[i];
                 bool isHovered = i == hoveredTile;
@@ -147,11 +152,11 @@ namespace PCGuardian
                 // 1. Background — rounded rect with status-tinted fill
                 int bgAlpha = ComputeBgAlpha(tile.Status, isHovered, pulseAlpha);
                 Color bgColor = Color.FromArgb(bgAlpha, statusColor);
-                var tileRect = new RectangleF(x, y, TileW, TileH);
-                gpu.FillRoundedRect(tileRect, 6f, bgColor);
+                var tileRect = new RectangleF(x, y, tileW, tileH);
+                gpu.FillRoundedRect(tileRect, 8f, bgColor);
 
                 // 2. Left accent bar
-                gpu.FillRect(new RectangleF(x + 2, y + AccentBarPadY, AccentBarWidth, TileH - AccentBarPadY * 2), statusColor);
+                gpu.FillRect(new RectangleF(x + 3, y + 6, 4, tileH - 12), statusColor);
 
                 // 3. Status icon
                 string icon = tile.Status switch
@@ -169,22 +174,22 @@ namespace PCGuardian
 
                 // Measure to center the combined text
                 string combined = $"{icon} {abbr}";
-                var textSize = gpu.MeasureText(combined, "Segoe UI Semibold", 7.5f, DW.FontWeight.SemiBold);
-                float textX = x + (TileW - textSize.Width) / 2f;
-                float textY = y + (TileH - textSize.Height) / 2f;
+                var textSize = gpu.MeasureText(combined, "Segoe UI Semibold", 11f, DW.FontWeight.SemiBold);
+                float textX = x + (tileW - textSize.Width) / 2f;
+                float textY = y + (tileH - textSize.Height) / 2f;
 
                 // Draw icon
-                gpu.DrawTextSimple(icon, "Segoe UI", 9f, textColor, textX, textY);
+                gpu.DrawTextSimple(icon, "Segoe UI", 13f, textColor, textX, textY);
 
                 // Draw abbreviation label after icon
-                var iconSize = gpu.MeasureText(icon + " ", "Segoe UI", 9f);
-                gpu.DrawTextSimple(abbr, "Segoe UI Semibold", 7.5f, textColor, textX + iconSize.Width, textY, DW.FontWeight.SemiBold);
+                var iconSize = gpu.MeasureText(icon + " ", "Segoe UI", 13f);
+                gpu.DrawTextSimple(abbr, "Segoe UI Semibold", 11f, textColor, textX + iconSize.Width, textY, DW.FontWeight.SemiBold);
 
                 // 4. Hover border
                 if (isHovered)
                 {
                     Color borderColor = Color.FromArgb(128, statusColor);
-                    var borderRect = new RectangleF(x + 1, y + 1, TileW - 2, TileH - 2);
+                    var borderRect = new RectangleF(x + 1, y + 1, tileW - 2, tileH - 2);
                     gpu.DrawRoundedRect(borderRect, 6f, borderColor, 1f);
                 }
             }

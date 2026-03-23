@@ -30,25 +30,45 @@ internal sealed class WmiService : IDisposable
 {
     private static readonly TimeSpan WmiTimeout = TimeSpan.FromSeconds(10);
 
-    private readonly SystemStaticInfo _static;
     private readonly System.Threading.Timer _timer;
     private readonly object _lock = new();
 
+    private SystemStaticInfo? _static;
+    private bool _staticInfoLoaded;
     private DynamicHwInfo? _dynamic;
     private int _tickCount;
+    private int _ticking;
     private bool _disposed;
 
     public event Action? Updated;
 
     public WmiService()
     {
-        _static = QueryStaticInfo();
+        // Bug 1 fix: don't call QueryStaticInfo() here — load lazily on first access.
+        // Bug 5 fix: _ticking field added above for reentrancy guard.
         _timer = new System.Threading.Timer(OnTick, null, TimeSpan.Zero, TimeSpan.FromSeconds(30));
     }
 
     // ── Public API ──────────────────────────────────────────────────
 
-    public SystemStaticInfo GetStaticInfo() => _static;
+    public SystemStaticInfo GetStaticInfo()
+    {
+        if (!_staticInfoLoaded)
+        {
+            try
+            {
+                _static = QueryStaticInfo();
+            }
+            catch (Exception)
+            {
+                _static = new SystemStaticInfo(
+                    "Unknown", 0, 0, 0, "Unknown", "Unknown",
+                    "Unknown", "Unknown", "Unknown", DateTime.MinValue);
+            }
+            _staticInfoLoaded = true;
+        }
+        return _static!;
+    }
 
     public DynamicHwInfo? GetDynamic()
     {
@@ -215,21 +235,30 @@ internal sealed class WmiService : IDisposable
     {
         if (_disposed) return;
 
-        // Bug 2 fix: atomic increment to avoid data race on overlapping timer callbacks
-        int tick = Interlocked.Increment(ref _tickCount);
+        // Bug 5 fix: reentrancy guard — skip if previous tick is still running
+        if (Interlocked.CompareExchange(ref _ticking, 1, 0) != 0) return;
+        try
+        {
+            // Bug 2 fix: atomic increment to avoid data race on overlapping timer callbacks
+            int tick = Interlocked.Increment(ref _tickCount);
 
-        bool isDiskSpaceTick = tick % 2 == 0;  // every 60s
-        bool isSmartTick = tick % 10 == 0;      // every 5 min
+            bool isDiskSpaceTick = tick % 2 == 0;  // every 60s
+            bool isSmartTick = tick % 10 == 0;      // every 5 min
 
-        float? temp = QueryThermalZone();
-        var battery = QueryBattery();
-        var drives = QueryDrives(isDiskSpaceTick, isSmartTick);
+            float? temp = QueryThermalZone();
+            var battery = QueryBattery();
+            var drives = QueryDrives(isDiskSpaceTick, isSmartTick);
 
-        var snapshot = new DynamicHwInfo(DateTime.UtcNow, temp, battery, drives);
+            var snapshot = new DynamicHwInfo(DateTime.UtcNow, temp, battery, drives);
 
-        lock (_lock) _dynamic = snapshot;
+            lock (_lock) _dynamic = snapshot;
 
-        Updated?.Invoke();
+            Updated?.Invoke();
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _ticking, 0);
+        }
     }
 
     // ── Thermal ─────────────────────────────────────────────────────
@@ -253,6 +282,7 @@ internal sealed class WmiService : IDisposable
         }
         catch (ManagementException) { }
         catch (UnauthorizedAccessException) { } // needs admin
+        catch (System.Runtime.InteropServices.COMException) { } // no ACPI thermal zone
 
         return null;
     }
@@ -285,6 +315,7 @@ internal sealed class WmiService : IDisposable
             }
         }
         catch (ManagementException) { }
+        catch (System.Runtime.InteropServices.COMException) { }
 
         if (!hasBattery) return null;
 
@@ -304,6 +335,7 @@ internal sealed class WmiService : IDisposable
             }
         }
         catch (ManagementException) { }
+        catch (System.Runtime.InteropServices.COMException) { }
 
         // BatteryStatus
         try
@@ -325,6 +357,7 @@ internal sealed class WmiService : IDisposable
             }
         }
         catch (ManagementException) { }
+        catch (System.Runtime.InteropServices.COMException) { }
 
         // BatteryCycleCount
         try
@@ -342,6 +375,7 @@ internal sealed class WmiService : IDisposable
             }
         }
         catch (ManagementException) { }
+        catch (System.Runtime.InteropServices.COMException) { }
 
         // Bug 4 fix: if fullChargeCap is zero despite battery being present,
         // WMI data is unreliable — return null to avoid false alarm (0% charge, 100% degradation).

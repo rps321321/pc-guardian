@@ -20,8 +20,7 @@ namespace PCGuardian
                 bounds.Width - RingWidth,
                 bounds.Height - RingWidth);
 
-            float easedProgress = EaseOutCubic(animProgress);
-            float sweepAngle = (score / 100f) * 360f * easedProgress;
+            float sweepAngle = (score / 100f) * 360f * animProgress;
             Color scoreColor = ScoreColor(score);
 
             // 1. Background track -- full circle
@@ -39,16 +38,16 @@ namespace PCGuardian
             float cx = bounds.X + bounds.Width / 2f;
             float cy = bounds.Y + bounds.Height / 2f;
 
-            string scoreText = ((int)(score * easedProgress)).ToString();
-            var numberSize = gpu.MeasureText(scoreText, "Segoe UI", 36f, DWFontWeight.Bold);
+            string scoreText = ((int)(score * animProgress)).ToString();
+            var numberSize = gpu.MeasureText(scoreText, "Segoe UI", 42f, DWFontWeight.Bold);
             float numberX = cx - numberSize.Width / 2f;
             float numberY = cy - numberSize.Height / 2f - 12f;
-            gpu.DrawTextSimple(scoreText, "Segoe UI", 36f, Color.White, numberX, numberY, DWFontWeight.Bold);
+            gpu.DrawTextSimple(scoreText, "Segoe UI", 42f, Color.White, numberX, numberY, DWFontWeight.Bold);
 
-            var gradeSize = gpu.MeasureText(grade, "Segoe UI Semibold", 14f, DWFontWeight.Normal);
+            var gradeSize = gpu.MeasureText(grade, "Segoe UI Semibold", 18f, DWFontWeight.Normal);
             float gradeX = cx - gradeSize.Width / 2f;
             float gradeY = cy - 12f + numberSize.Height / 2f + 8f;
-            gpu.DrawTextSimple(grade, "Segoe UI Semibold", 14f, scoreColor, gradeX, gradeY, DWFontWeight.Normal);
+            gpu.DrawTextSimple(grade, "Segoe UI Semibold", 18f, scoreColor, gradeX, gradeY, DWFontWeight.Normal);
 
             // 5. Friendly label below the ring
             string label = score switch
@@ -60,10 +59,10 @@ namespace PCGuardian
                 _ => "Critical"
             };
 
-            var labelSize = gpu.MeasureText(label, "Segoe UI", 9f, DWFontWeight.Normal);
+            var labelSize = gpu.MeasureText(label, "Segoe UI", 13f, DWFontWeight.Normal);
             float labelX = bounds.X + (bounds.Width - labelSize.Width) / 2f;
             float labelY = bounds.Bottom + 8f;
-            gpu.DrawTextSimple(label, "Segoe UI", 9f, Theme.TextSecondary, labelX, labelY, DWFontWeight.Normal);
+            gpu.DrawTextSimple(label, "Segoe UI", 13f, Theme.TextSecondary, labelX, labelY, DWFontWeight.Normal);
         }
 
         // ── GDI+ path (unchanged) ────────────────────────────────────────

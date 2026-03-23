@@ -33,6 +33,9 @@ internal sealed class MainForm : Form
     Database db = null!;
     ProcessMonitor? monitor;
     ITServer? itServer;
+    CloudflareTunnel? tunnel;
+    DeployConfig? deployConfig;
+    string? tunnelUrl;
     RealTimeMonitor? realTimeMonitor;
     SystemMonitor? sysMonitor;
     Report? lastReport;
@@ -71,6 +74,10 @@ internal sealed class MainForm : Form
         settings = SettingsManager.Load();
         settings.StartWithWindows = SettingsManager.IsStartWithWindowsEnabled();
 
+        // Load deploy config early (before UI setup) — safe defaults if no deploy.json
+        try { deployConfig = DeployConfigLoader.Load(); }
+        catch { deployConfig = null; }
+
         // Apply saved preferences
         Theme.SetDark(settings.DarkMode);
         SoundManager.Enabled = settings.SoundsEnabled;
@@ -80,8 +87,41 @@ internal sealed class MainForm : Form
         db.Initialize();
         if (settings.ProcessMonitorEnabled)
             monitor = new ProcessMonitor(db);
-        if (settings.ITSharingEnabled)
+
+        // Deploy config takes priority for IT server setup (tunnel-enabled deployment)
+        if (deployConfig is { TunnelEnabled: true, Pin.Length: > 0 })
         {
+            itServer = new ITServer
+            {
+                TrustLevel = deployConfig.TrustLevel ?? "view",
+                CompanyName = deployConfig.Company ?? "PC Guardian",
+            };
+            try
+            {
+                itServer.Start(settings.ITSharingPort, deployConfig.Pin);
+                if (lastReport != null) itServer.UpdateReport(lastReport);
+
+                // Start Cloudflare tunnel pointing to the IT server port
+                tunnel = new CloudflareTunnel();
+                tunnel.UrlAssigned += url =>
+                {
+                    tunnelUrl = url;
+                    try
+                    {
+                        if (InvokeRequired)
+                            BeginInvoke(() => UpdateTrayForTunnel(url));
+                        else
+                            UpdateTrayForTunnel(url);
+                    }
+                    catch { /* Form may be disposed */ }
+                };
+                tunnel.Start(itServer.Port);
+            }
+            catch { /* Tunnel or server start failed — continue without */ }
+        }
+        else if (settings.ITSharingEnabled)
+        {
+            // Fall back to user-configured IT sharing (no tunnel)
             itServer = new ITServer();
             try { itServer.Start(settings.ITSharingPort, string.IsNullOrWhiteSpace(settings.ITSharingPin) ? null : settings.ITSharingPin); }
             catch { }
@@ -110,7 +150,10 @@ internal sealed class MainForm : Form
         // Check for updates in background (tray is now available)
         _ = Task.Run(async () => { try { await UpdateChecker.CheckAndNotify(tray); } catch { } });
 
-        if (startMinimized)
+        // Determine whether to start minimized: deploy config can force it,
+        // or the caller can request it (e.g., --minimized flag)
+        bool shouldMinimize = startMinimized || (deployConfig != null && !deployConfig.ShowMainWindow);
+        if (shouldMinimize)
         {
             WindowState = FormWindowState.Minimized;
             ShowInTaskbar = false;
@@ -125,7 +168,7 @@ internal sealed class MainForm : Form
     void BuildUI()
     {
         Text = "PC Guardian";
-        Size = new(640, 800);
+        Size = new(1050, 1250);
         FormBorderStyle = FormBorderStyle.FixedSingle;
         MaximizeBox = false;
         StartPosition = FormStartPosition.CenterScreen;
@@ -654,6 +697,12 @@ internal sealed class MainForm : Form
     // System tray
     // ===================================================================
 
+    void UpdateTrayForTunnel(string url)
+    {
+        if (tray != null)
+            tray.Text = $"PC Guardian — IT: {url}";
+    }
+
     void SetupTray()
     {
         tray = new NotifyIcon
@@ -734,7 +783,11 @@ internal sealed class MainForm : Form
         // IT Server
         if (settings.ITSharingEnabled)
         {
-            if (itServer == null) itServer = new ITServer();
+            if (itServer == null)
+            {
+                itServer = new ITServer();
+                itServer.ScanRequested += () => RunScan();
+            }
             else itServer.Stop();
             itServer.Start(settings.ITSharingPort,
                 string.IsNullOrWhiteSpace(settings.ITSharingPin) ? null : settings.ITSharingPin);

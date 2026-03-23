@@ -52,6 +52,14 @@ internal static class ScanEngine
         catch { return "Unknown"; }
     }
 
+    static bool IsPrivate172(string ip)
+    {
+        if (!ip.StartsWith("172.")) return false;
+        var dot = ip.IndexOf('.', 4);
+        if (dot < 0) return false;
+        return int.TryParse(ip[4..dot], out int second) && second >= 16 && second <= 31;
+    }
+
     static List<TcpEntry> GetTcpTable()
     {
         var list = new List<TcpEntry>();
@@ -72,7 +80,7 @@ internal static class ScanEngine
                 buf = Marshal.AllocHGlobal(size);
                 ret = GetExtendedTcpTable(buf, ref size, false, AF_INET, TCP_TABLE_OWNER_PID_ALL, 0);
             } while (ret == 122 && ++attempts < 5);
-            if (ret != 0) { Marshal.FreeHGlobal(buf); return list; }
+            if (ret != 0) { Marshal.FreeHGlobal(buf); buf = IntPtr.Zero; return list; }
 
             int count = Marshal.ReadInt32(buf);
             if (count <= 0 || count > 100_000) return list; // Sanity check
@@ -98,7 +106,7 @@ internal static class ScanEngine
             }
         }
         catch { /* P/Invoke failure — return what we have */ }
-        finally { Marshal.FreeHGlobal(buf); }
+        finally { if (buf != IntPtr.Zero) Marshal.FreeHGlobal(buf); }
         return list;
     }
 
@@ -785,7 +793,7 @@ internal static class ScanEngine
                 var servers = dns.Select(a => a.ToString()).ToList();
                 bool allTrusted = servers.All(s =>
                     knownSafe.Contains(s) || s.StartsWith("192.168.") || s.StartsWith("10.") ||
-                    s.StartsWith("172.") || s.StartsWith("fe80:") || s is "::1" or "127.0.0.1");
+                    IsPrivate172(s) || s.StartsWith("fe80:") || s is "::1" or "127.0.0.1");
 
                 var s = allTrusted ? Status.Safe : Status.Warning;
                 if (s > worst) worst = s;

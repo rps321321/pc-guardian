@@ -31,12 +31,12 @@ internal sealed class DashboardPanel : UserControl
     int _activityScrollOffset;
 
     // Layout constants
-    const int PanelWidth = 640;
-    const int Margin = 16;
-    const int ContentWidth = PanelWidth - Margin * 2; // 608
+    const int PanelWidth = 1050;
+    new const int Margin = 28;
+    const int ContentWidth = PanelWidth - Margin * 2; // 994
 
     // Fonts (use Theme statics where available, create extras as needed)
-    static readonly Font _sectionFont = new("Segoe UI Semibold", 11f);
+    static readonly Font _sectionFont = new("Segoe UI Semibold", 12f);
     static readonly Font _smallFont = Theme.Small;
     static readonly Font _tileFont = new("Segoe UI", 7.5f);
     static readonly Font _btnFont = new("Segoe UI Semibold", 9f);
@@ -63,7 +63,16 @@ internal sealed class DashboardPanel : UserControl
             true);
 
         // Try GPU acceleration — falls back to GDI+ if unavailable
-        HandleCreated += (_, _) => _gpu = GpuRenderer.TryCreate(Handle, ClientSize);
+        HandleCreated += (_, _) =>
+        {
+            _gpu = GpuRenderer.TryCreate(Handle, ClientSize);
+            if (_gpu != null)
+            {
+                // D2D renders directly to the HWND — disable WinForms double-buffering
+                // which would overwrite D2D output with an empty bitmap
+                SetStyle(ControlStyles.OptimizedDoubleBuffer, false);
+            }
+        };
 
         BackColor = Theme.BgPrimary;
         Dock = DockStyle.Fill;
@@ -153,12 +162,21 @@ internal sealed class DashboardPanel : UserControl
 
     // ── Paint ────────────────────────────────────────────────────────
 
+    protected override void OnPaintBackground(PaintEventArgs e)
+    {
+        // When D2D is active, skip GDI background erase — D2D.Clear() handles it
+        if (_gpu != null && _gpu.IsAvailable) return;
+        base.OnPaintBackground(e);
+    }
+
     protected override void OnPaint(PaintEventArgs e)
     {
         if (_gpu != null && _gpu.IsAvailable)
         {
+            // D2D renders directly to window — do NOT call base.OnPaint
+            // which would blit an empty GDI buffer on top
             RenderD2D();
-            return; // skip GDI+ path entirely
+            return;
         }
 
         // ── GDI+ fallback path ──
@@ -192,15 +210,15 @@ internal sealed class DashboardPanel : UserControl
         _gpu!.BeginDraw();
         _gpu.Clear(Theme.BgPrimary);
 
-        // Title bar (Y=0..40)
-        _gpu.DrawTextSimple("PC Guardian", "Segoe UI", 20f, Theme.TextPrimary, Margin, 8, Vortice.DirectWrite.FontWeight.Bold);
+        // Title bar (Y=0..56)
+        _gpu.DrawTextSimple("PC Guardian", "Segoe UI", 30f, Theme.TextPrimary, Margin, 12, Vortice.DirectWrite.FontWeight.Bold);
         // Gear icon
-        var gearRect = new Rectangle(PanelWidth - 72, 8, 28, 28);
-        _gpu.DrawTextSimple("\u2699", "Segoe UI Emoji", 18f, Theme.TextSecondary, gearRect.X, gearRect.Y);
+        var gearRect = new Rectangle(PanelWidth - 96, 12, 36, 36);
+        _gpu.DrawTextSimple("\u2699", "Segoe UI Emoji", 28f, Theme.TextSecondary, gearRect.X, gearRect.Y);
         _hitRegions.Add(new HitRegion(gearRect, "settings", () => SettingsRequested?.Invoke()));
         // Moon icon
-        var moonRect = new Rectangle(PanelWidth - 40, 8, 28, 28);
-        _gpu.DrawTextSimple("\U0001F319", "Segoe UI Emoji", 18f, Theme.TextSecondary, moonRect.X, moonRect.Y);
+        var moonRect = new Rectangle(PanelWidth - 52, 12, 36, 36);
+        _gpu.DrawTextSimple("\U0001F319", "Segoe UI Emoji", 28f, Theme.TextSecondary, moonRect.X, moonRect.Y);
         _hitRegions.Add(new HitRegion(moonRect, "theme-toggle", () =>
         {
             Theme.SetDark(!Theme.IsDark);
@@ -208,25 +226,28 @@ internal sealed class DashboardPanel : UserControl
             Invalidate();
         }));
 
-        // Score ring (Y=50..210)
+        // Score ring (Y=60..220) — 160px diameter, centered in left half
         float entranceProgress = _entranceComplete
             ? 1f
             : EaseOutCubic((float)Math.Min((DateTime.UtcNow - _animStartTime).TotalMilliseconds / 800.0, 1.0));
         float animatedScore = _state.ThreatScore * entranceProgress;
-        ScoreRingRenderer.DrawD2D(_gpu, new Rectangle(120, 50, 160, 160), animatedScore, _state.Grade, entranceProgress);
+        int ringSize = 160;
+        int ringX = (PanelWidth / 2 - ringSize) / 2;  // center in left half
+        ScoreRingRenderer.DrawD2D(_gpu, new Rectangle(ringX, 60, ringSize, ringSize), animatedScore, _state.Grade, entranceProgress);
 
-        // Sparkline
+        // Sparkline — in the right half
         var samples = new float[_scoreHistoryCount];
         for (int i = 0; i < _scoreHistoryCount; i++)
         {
             int idx = (_scoreHistoryIndex - _scoreHistoryCount + i + _scoreHistory.Length) % _scoreHistory.Length;
             samples[i] = _scoreHistory[idx];
         }
-        SparklineRenderer.DrawD2D(_gpu, new Rectangle(380, 80, 140, 48), samples, Theme.ScoreColor(_state.ThreatScore));
+        int sparkX = PanelWidth / 2 + 40;
+        SparklineRenderer.DrawD2D(_gpu, new Rectangle(sparkX, 80, 300, 90), samples, Theme.ScoreColor(_state.ThreatScore));
 
-        // Trend text
+        // Trend text — below sparkline
         {
-            int tx = 524, ty = 136;
+            int tx = sparkX + 305, ty = 130;
             var color = _state.Trend switch
             {
                 TrendDirection.Improving => Theme.Safe,
@@ -239,14 +260,17 @@ internal sealed class DashboardPanel : UserControl
                 TrendDirection.Degrading => "\u2193",
                 _ => "\u2192",
             };
-            _gpu.DrawTextSimple($"{arrow} {_state.TrendDelta:+#;-#;0}", "Segoe UI Semibold", 9f, color, tx, ty, Vortice.DirectWrite.FontWeight.SemiBold);
+            _gpu.DrawTextSimple($"{arrow} {_state.TrendDelta:+#;-#;0}", "Segoe UI Semibold", 14f, color, tx, ty, Vortice.DirectWrite.FontWeight.SemiBold);
         }
 
-        // Gauges (Y=220..300)
+        // Gauges (Y=240..310) — 296×32, two columns
         DrawGaugesD2D();
 
-        // Section headers + content
-        DrawSectionHeaderD2D(308, "Security Posture", $"{_state.SecurityPassed}/{_state.SecurityTotal} \u2713");
+        // ── Security Posture (Y=325) ──
+        string postureRight = _state.SecurityTotal > 0
+            ? $"{_state.SecurityPassed}/{_state.SecurityTotal} \u2713"
+            : "Not scanned";
+        DrawSectionHeaderD2D(325, "Security Posture", postureRight);
 
         if (_state.Tiles != null && _state.Tiles.Count > 0)
         {
@@ -260,34 +284,37 @@ internal sealed class DashboardPanel : UserControl
                 if (_hoveredId == $"tile-{i}") { hoveredTile = i; break; }
             }
 
-            SecurityTileRenderer.DrawD2D(_gpu, new Rectangle(Margin, 328, ContentWidth, 86), _state.Tiles, hoveredTile, pulseAlpha);
+            SecurityTileRenderer.DrawD2D(_gpu, new Rectangle(Margin, 358, ContentWidth, 140), _state.Tiles, hoveredTile, pulseAlpha);
 
-            // Register hit regions for tiles
-            int tileW = 72, tileH = 40, gap = 4;
+            // Register hit regions for tiles — 8 per row
+            int tileW = (ContentWidth - 7 * 8) / 8;  // ~118px each
+            int tileH = 58, tileGapH = 8, tileGapV = 12;
             for (int i = 0; i < _state.Tiles.Count && i < 16; i++)
             {
                 int col = i % 8;
                 int row = i / 8;
-                int x = Margin + col * (tileW + gap);
-                int y = 328 + row * (tileH + 6);
+                int x = Margin + col * (tileW + tileGapH);
+                int y = 358 + row * (tileH + tileGapV);
                 _hitRegions.Add(new HitRegion(new Rectangle(x, y, tileW, tileH), $"tile-{i}", null));
             }
         }
 
-        DrawSectionHeaderD2D(422, "Recent Activity");
+        // ── Recent Activity (Y=510) ──
+        DrawSectionHeaderD2D(510, "Recent Activity");
 
         if (_state.RecentActivity != null && _state.RecentActivity.Count > 0)
         {
-            int maxOffset = Math.Max(0, _state.RecentActivity.Count - 5);
+            int maxOffset = Math.Max(0, _state.RecentActivity.Count - 8);
             _activityScrollOffset = Math.Clamp(_activityScrollOffset, 0, maxOffset);
 
             int hoveredFeedRow = -1;
-            ActivityFeedRenderer.DrawD2D(_gpu, new Rectangle(Margin, 442, ContentWidth, 120), _state.RecentActivity, _activityScrollOffset, hoveredFeedRow);
+            ActivityFeedRenderer.DrawD2D(_gpu, new Rectangle(Margin, 545, ContentWidth, 280), _state.RecentActivity, _activityScrollOffset, hoveredFeedRow);
         }
 
-        DrawSectionHeaderD2D(570, "Recommendations");
+        // ── Recommendations (Y=840) ──
+        DrawSectionHeaderD2D(840, "Recommendations");
 
-        if (_state.TopRecommendations != null && _state.TopRecommendations.Count > 0)
+        if (_state.TopRecommendations != null)
         {
             int hoveredRecCard = -1;
             int hoveredFixBtn = -1;
@@ -296,10 +323,10 @@ internal sealed class DashboardPanel : UserControl
                 if (_hoveredId == $"rec-{i}") { hoveredRecCard = i; break; }
             }
 
-            RecommendationRenderer.DrawD2D(_gpu, new Rectangle(Margin, 590, ContentWidth, 108), _state.TopRecommendations, hoveredRecCard, hoveredFixBtn);
+            RecommendationRenderer.DrawD2D(_gpu, new Rectangle(Margin, 875, ContentWidth, 200), _state.TopRecommendations, hoveredRecCard, hoveredFixBtn);
 
             // Register hit regions for recommendation cards + fix buttons
-            int startY = 590, cardH = 36, cardGap = 4;
+            int startY = 875, cardH = 56, cardGap = 8;
             for (int i = 0; i < _state.TopRecommendations.Count && i < 3; i++)
             {
                 int y = startY + i * (cardH + cardGap);
@@ -307,7 +334,7 @@ internal sealed class DashboardPanel : UserControl
 
                 if (_state.TopRecommendations[i].HasFix)
                 {
-                    var fixRect = new Rectangle(cardRect.Right - 64, cardRect.Y + 6, 56, 24);
+                    var fixRect = new Rectangle(cardRect.Right - 90, cardRect.Y + 12, 76, 32);
                     var recId = _state.TopRecommendations[i].Id;
                     _hitRegions.Add(new HitRegion(fixRect, $"fix-{i}", () => FixRequested?.Invoke(recId)));
                 }
@@ -316,7 +343,7 @@ internal sealed class DashboardPanel : UserControl
             }
         }
 
-        // Quick actions (Y=706..730)
+        // ── Quick Actions (Y=1100..1145) ──
         {
             int hoveredButton = -1;
             string[] btnIds = ["btn-scan", "btn-activity", "btn-network", "btn-settings"];
@@ -325,18 +352,18 @@ internal sealed class DashboardPanel : UserControl
                 if (_hoveredId == btnIds[i]) { hoveredButton = i; break; }
             }
 
-            QuickActionRenderer.DrawD2D(_gpu, new Rectangle(0, 706, PanelWidth, 28), hoveredButton);
+            QuickActionRenderer.DrawD2D(_gpu, new Rectangle(0, 1100, PanelWidth, 44), hoveredButton);
 
             // Register hit regions for quick action buttons
-            int btnW = (PanelWidth - 5 * 8) / 4;
-            int btnH = 28;
-            int totalW = btnW * 4 + 8 * 3;
+            int btnW = (PanelWidth - 5 * 14) / 4;
+            int btnH = 44;
+            int totalW = btnW * 4 + 14 * 3;
             int startX = (PanelWidth - totalW) / 2;
             Action?[] handlers = [() => ScanRequested?.Invoke(), () => ActivityRequested?.Invoke(), () => NetworkRequested?.Invoke(), () => SettingsRequested?.Invoke()];
             for (int i = 0; i < 4; i++)
             {
-                int x = startX + i * (btnW + 8);
-                _hitRegions.Add(new HitRegion(new Rectangle(x, 706, btnW, btnH), btnIds[i], handlers[i]));
+                int x = startX + i * (btnW + 14);
+                _hitRegions.Add(new HitRegion(new Rectangle(x, 1100, btnW, btnH), btnIds[i], handlers[i]));
             }
         }
 
@@ -345,13 +372,13 @@ internal sealed class DashboardPanel : UserControl
 
     void DrawSectionHeaderD2D(int y, string title, string? rightText = null)
     {
-        _gpu!.DrawTextSimple(title, "Segoe UI Semibold", 11f, Theme.TextSecondary, Margin, y, Vortice.DirectWrite.FontWeight.SemiBold);
+        _gpu!.DrawTextSimple(title, "Segoe UI Semibold", 16f, Theme.TextSecondary, Margin, y, Vortice.DirectWrite.FontWeight.SemiBold);
         if (rightText != null)
         {
-            var size = _gpu.MeasureText(rightText, "Segoe UI", 9f);
-            _gpu.DrawTextSimple(rightText, "Segoe UI", 9f, Theme.TextMuted, PanelWidth - Margin - size.Width, y + 2);
+            var size = _gpu.MeasureText(rightText, "Segoe UI", 14f);
+            _gpu.DrawTextSimple(rightText, "Segoe UI", 14f, Theme.TextMuted, PanelWidth - Margin - size.Width, y + 3);
         }
-        _gpu.FillRect(new RectangleF(Margin, y + 20, ContentWidth, 1), Theme.Border);
+        _gpu.FillRect(new RectangleF(Margin, y + 28, ContentWidth, 1), Theme.Border);
     }
 
     void DrawGaugesD2D()
@@ -362,9 +389,10 @@ internal sealed class DashboardPanel : UserControl
 
         float cpu = _state.CpuPercent, gpuVal = _state.GpuPercent, ram = _state.RamPercent;
         float disk = _state.DiskMBps;
-        int gaugeW = 296, gaugeH = 32, gapX = 16, gapY = 8;
+        int gaugeW = (ContentWidth - 30) / 2;  // dynamic: ~482px each
+        int gaugeH = 32, gapX = 30, gapY = 10;
         int x0 = Margin, x1 = Margin + gaugeW + gapX;
-        int y0 = 220, y1 = y0 + gaugeH + gapY;
+        int y0 = 240, y1 = y0 + gaugeH + gapY;
 
         GaugeBarRenderer.DrawD2D(_gpu!, new Rectangle(x0, y0, gaugeW, gaugeH), "CPU", cpu, cpu * gaugeProgress, $"{cpu:F0}%");
         GaugeBarRenderer.DrawD2D(_gpu!, new Rectangle(x1, y0, gaugeW, gaugeH), "GPU", gpuVal, gpuVal * gaugeProgress, $"{gpuVal:F0}%");
@@ -707,9 +735,6 @@ internal sealed class DashboardPanel : UserControl
             _animTimer.Stop();
             _animTimer.Dispose();
             _gpu?.Dispose();
-            GaugeBarRenderer.DisposeResources();
-            RecommendationRenderer.DisposeResources();
-            QuickActionRenderer.DisposeResources();
         }
         base.Dispose(disposing);
     }

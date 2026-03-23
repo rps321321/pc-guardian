@@ -116,6 +116,14 @@ internal sealed class GpuRenderer : IDisposable
         float cy = bounds.Y + bounds.Height / 2f;
         float rx = bounds.Width / 2f;
         float ry = bounds.Height / 2f;
+
+        // Full circle: ArcSegment can't handle identical start/end points
+        if (MathF.Abs(sweepAngleDeg) >= 359.9f)
+        {
+            _rt.DrawEllipse(new Ellipse(new Vector2(cx, cy), rx, ry), GetBrush(color), strokeWidth);
+            return;
+        }
+
         float startRad = startAngleDeg * MathF.PI / 180f;
         float endRad = (startAngleDeg + sweepAngleDeg) * MathF.PI / 180f;
 

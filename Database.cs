@@ -161,7 +161,7 @@ internal sealed class Database : IDisposable
 
     public int UpsertProgram(string name, string? path, string? company, string category = "Other")
     {
-        var now = DateTime.UtcNow.ToString("o");
+        var now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
         using var db = Open();
 
         using var insert = db.CreateCommand();
@@ -211,7 +211,7 @@ internal sealed class Database : IDisposable
         cmd.CommandText = "INSERT INTO sessions (program_id, pid, started) VALUES (@pid, @procPid, @t);";
         cmd.Parameters.AddWithValue("@pid", programId);
         cmd.Parameters.AddWithValue("@procPid", pid);
-        cmd.Parameters.AddWithValue("@t", startTime.ToUniversalTime().ToString("o"));
+        cmd.Parameters.AddWithValue("@t", startTime.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss"));
         cmd.ExecuteNonQuery();
     }
 
@@ -227,7 +227,7 @@ internal sealed class Database : IDisposable
             );
             """;
         cmd.Parameters.AddWithValue("@pid", pid);
-        cmd.Parameters.AddWithValue("@t", endTime.ToUniversalTime().ToString("o"));
+        cmd.Parameters.AddWithValue("@t", endTime.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss"));
         cmd.Parameters.AddWithValue("@mem", peakMemoryMb);
         cmd.ExecuteNonQuery();
     }
@@ -289,7 +289,7 @@ internal sealed class Database : IDisposable
             INSERT INTO scan_history (timestamp, overall, safe_count, warning_count, danger_count, details_json)
             VALUES (@ts, @ov, @s, @w, @d, @j);
             """;
-        cmd.Parameters.AddWithValue("@ts", timestamp.ToUniversalTime().ToString("o"));
+        cmd.Parameters.AddWithValue("@ts", timestamp.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss"));
         cmd.Parameters.AddWithValue("@ov", overall);
         cmd.Parameters.AddWithValue("@s", safeCount);
         cmd.Parameters.AddWithValue("@w", warningCount);
@@ -319,7 +319,7 @@ internal sealed class Database : IDisposable
     public void LogConnections(List<(string ProcessName, string RemoteAddress, int RemotePort)> entries)
     {
         if (entries.Count == 0) return;
-        var now = DateTime.UtcNow.ToString("o");
+        var now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
         using var db = Open();
         using var tx = db.BeginTransaction();
         try
@@ -351,13 +351,14 @@ internal sealed class Database : IDisposable
 
     // ── Convenience overloads for ProcessMonitor ────────────────────
 
-    public void StartSession(string programName, int pid, DateTime startTime, double memoryMb)
+    public void StartSession(string programName, string? path, int pid, DateTime startTime, double memoryMb)
     {
-        // Look up program ID by name, then start session
+        // Look up program ID by name and path, then start session
         using var db = Open();
         using var lookup = db.CreateCommand();
-        lookup.CommandText = "SELECT id FROM programs WHERE name = @name ORDER BY last_seen DESC LIMIT 1;";
+        lookup.CommandText = "SELECT id FROM programs WHERE name = @name AND path IS @path ORDER BY last_seen DESC LIMIT 1;";
         lookup.Parameters.AddWithValue("@name", programName);
+        lookup.Parameters.AddWithValue("@path", (object?)path ?? DBNull.Value);
         var result = lookup.ExecuteScalar();
         if (result == null) return;
         int programId = Convert.ToInt32(result);
@@ -366,7 +367,7 @@ internal sealed class Database : IDisposable
         cmd.CommandText = "INSERT INTO sessions (program_id, pid, started, peak_memory_mb) VALUES (@pgid, @pid, @t, @mem);";
         cmd.Parameters.AddWithValue("@pgid", programId);
         cmd.Parameters.AddWithValue("@pid", pid);
-        cmd.Parameters.AddWithValue("@t", startTime.ToUniversalTime().ToString("o"));
+        cmd.Parameters.AddWithValue("@t", startTime.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss"));
         cmd.Parameters.AddWithValue("@mem", memoryMb);
         cmd.ExecuteNonQuery();
     }
@@ -473,7 +474,7 @@ internal sealed class Database : IDisposable
             INSERT INTO hardware_metrics (timestamp, cpu_temp, cpu_load, gpu_temp, gpu_load, fan_rpm, cpu_power, battery_level, battery_health, top_processes)
             VALUES (@ts, @ct, @cl, @gt, @gl, @fr, @cp, @bl, @bh, @tp);
             """;
-        cmd.Parameters.AddWithValue("@ts", timestamp.ToUniversalTime().ToString("o"));
+        cmd.Parameters.AddWithValue("@ts", timestamp.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss"));
         cmd.Parameters.AddWithValue("@ct", (object?)cpuTemp ?? DBNull.Value);
         cmd.Parameters.AddWithValue("@cl", (object?)cpuLoad ?? DBNull.Value);
         cmd.Parameters.AddWithValue("@gt", (object?)gpuTemp ?? DBNull.Value);
@@ -525,7 +526,7 @@ internal sealed class Database : IDisposable
             INSERT INTO security_events (timestamp, source, event_type, severity, detail, raw_data)
             VALUES (@ts, @src, @et, @sev, @det, @raw);
             """;
-        cmd.Parameters.AddWithValue("@ts", timestamp.ToUniversalTime().ToString("o"));
+        cmd.Parameters.AddWithValue("@ts", timestamp.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss"));
         cmd.Parameters.AddWithValue("@src", source);
         cmd.Parameters.AddWithValue("@et", eventType);
         cmd.Parameters.AddWithValue("@sev", severity);
@@ -561,7 +562,7 @@ internal sealed class Database : IDisposable
             INSERT INTO disk_space_log (timestamp, drive, total_gb, free_gb)
             VALUES (@ts, @drv, @total, @free);
             """;
-        cmd.Parameters.AddWithValue("@ts", timestamp.ToUniversalTime().ToString("o"));
+        cmd.Parameters.AddWithValue("@ts", timestamp.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss"));
         cmd.Parameters.AddWithValue("@drv", drive);
         cmd.Parameters.AddWithValue("@total", totalGb);
         cmd.Parameters.AddWithValue("@free", freeGb);

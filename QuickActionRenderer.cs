@@ -68,13 +68,16 @@ internal static class QuickActionRenderer
 
     public static void DrawD2D(GpuRenderer gpu, Rectangle bounds, int hoveredIndex)
     {
-        int buttonWidth = (bounds.Width - 5 * Gap) / 4;
-        int y = bounds.Y + (bounds.Height - ButtonHeight) / 2;
+        int gap = 12;
+        int pad = 28;  // left/right padding
+        int buttonWidth = (bounds.Width - 2 * pad - 3 * gap) / 4;
+        int btnH = bounds.Height - 4;  // use nearly full bounds height
+        int y = bounds.Y + 2;
 
         for (int i = 0; i < Buttons.Length; i++)
         {
-            int x = bounds.X + Gap + i * (buttonWidth + Gap);
-            var btnRect = new RectangleF(x, y, buttonWidth, ButtonHeight);
+            int x = bounds.X + pad + i * (buttonWidth + gap);
+            var btnRect = new RectangleF(x, y, buttonWidth, btnH);
             bool isHovered = i == hoveredIndex;
             bool isScan = i == 0;
 
@@ -95,10 +98,10 @@ internal static class QuickActionRenderer
             // Text — centered via MeasureText
             Color textColor = isScan ? Theme.Accent : Theme.TextPrimary;
             string text = $"{Buttons[i].Icon} {Buttons[i].Label}";
-            var textSize = gpu.MeasureText(text, "Segoe UI Semibold", 9f, Vortice.DirectWrite.FontWeight.SemiBold);
+            var textSize = gpu.MeasureText(text, "Segoe UI Semibold", 13f, Vortice.DirectWrite.FontWeight.SemiBold);
             float tx = x + (buttonWidth - textSize.Width) / 2f;
-            float ty = y + (ButtonHeight - textSize.Height) / 2f;
-            gpu.DrawTextSimple(text, "Segoe UI Semibold", 9f, textColor, tx, ty, Vortice.DirectWrite.FontWeight.SemiBold);
+            float ty = y + (btnH - textSize.Height) / 2f;
+            gpu.DrawTextSimple(text, "Segoe UI Semibold", 13f, textColor, tx, ty, Vortice.DirectWrite.FontWeight.SemiBold);
         }
     }
 

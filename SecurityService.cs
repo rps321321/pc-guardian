@@ -221,19 +221,20 @@ internal sealed class SecurityService
     {
         // Lines look like: "Minimum password length                  0"
         // or "Lockout threshold                        Never"
+        // Note: "net accounts" uses whitespace (not colons) to separate label from value.
         foreach (var line in output.Split('\n'))
         {
             if (!line.Contains(label, StringComparison.OrdinalIgnoreCase))
                 continue;
 
-            var parts = line.Split(':');
-            if (parts.Length < 2) continue;
+            var match = Regex.Match(line, label + @"\s+(\d+|Never)", RegexOptions.IgnoreCase);
+            if (!match.Success) continue;
 
-            var value = parts[1].Trim();
+            var value = match.Groups[1].Value;
             if (value.Equals("Never", StringComparison.OrdinalIgnoreCase))
                 return 0;
 
-            if (int.TryParse(Regex.Match(value, @"\d+").Value, out var num))
+            if (int.TryParse(value, out var num))
                 return num;
         }
 

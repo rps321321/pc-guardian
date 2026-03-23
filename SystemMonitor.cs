@@ -38,9 +38,9 @@ internal sealed class SystemMonitor : IDisposable
     const int DbLogEveryNTicks = 30; // ~60 s at 2 s interval
 
     readonly object _lock = new();
-    readonly PerfService _perf;
-    readonly WmiService _wmi;
-    readonly SecurityService _security;
+    readonly PerfService? _perf;
+    readonly WmiService? _wmi;
+    readonly SecurityService? _security;
     readonly Database? _db;
     readonly bool _isAdmin;
 
@@ -61,12 +61,19 @@ internal sealed class SystemMonitor : IDisposable
         _db = db;
         _isAdmin = IsRunningAsAdmin();
 
-        _perf = new PerfService();
-        _wmi = new WmiService();
-        _security = new SecurityService();
+        // Bug 3 fix: wrap each service construction individually so one failure
+        // doesn't prevent the others from initializing.
+        try { _perf = new PerfService(); }
+        catch { _perf = null; }
 
-        _perf.Updated += OnSubServiceUpdated;
-        _wmi.Updated += OnSubServiceUpdated;
+        try { _wmi = new WmiService(); }
+        catch { _wmi = null; }
+
+        try { _security = new SecurityService(); }
+        catch { _security = null; }
+
+        if (_perf is not null) _perf.Updated += OnSubServiceUpdated;
+        if (_wmi is not null) _wmi.Updated += OnSubServiceUpdated;
     }
 
     // ── Public API ───────────────────────────────────────────────────────
@@ -112,19 +119,19 @@ internal sealed class SystemMonitor : IDisposable
     }
 
     /// <summary>Delegates to SecurityService.</summary>
-    public SecurityPosture GetSecurityPosture() => _security.GetPosture();
+    public SecurityPosture? GetSecurityPosture() => _security?.GetPosture();
 
     /// <summary>Delegates to WmiService static system info.</summary>
-    public SystemStaticInfo GetSystemInfo() => _wmi.GetStaticInfo();
+    public SystemStaticInfo? GetSystemInfo() => _wmi?.GetStaticInfo();
 
     /// <summary>Returns the latest perf-counter reading, or null if none yet.</summary>
-    public PerfReading? GetLatestPerf() => _perf.GetLatest();
+    public PerfReading? GetLatestPerf() => _perf?.GetLatest();
 
     /// <summary>Returns WMI static hardware info.</summary>
-    public SystemStaticInfo GetStaticInfo() => _wmi.GetStaticInfo();
+    public SystemStaticInfo? GetStaticInfo() => _wmi?.GetStaticInfo();
 
     /// <summary>Returns WMI dynamic hardware info (drives, battery, thermal), or null.</summary>
-    public DynamicHwInfo? GetDynamic() => _wmi.GetDynamic();
+    public DynamicHwInfo? GetDynamic() => _wmi?.GetDynamic();
 
     // ── Event handler ────────────────────────────────────────────────────
 
@@ -163,16 +170,16 @@ internal sealed class SystemMonitor : IDisposable
 
     HardwareSnapshot ComposeSnapshot()
     {
-        var perf = _perf.GetLatest();
-        var wmiDynamic = _wmi.GetDynamic();
+        var perf = _perf?.GetLatest();
+        var wmiDynamic = _wmi?.GetDynamic();
 
         float? cpuLoad = perf?.CpuPercent;
         float? gpuLoad = perf?.GpuPercent;
         float? cpuTemp = wmiDynamic?.ThermalZoneTempC;
 
-        var staticInfo = _wmi.GetStaticInfo();
+        var staticInfo = _wmi?.GetStaticInfo();
         bool hasGpu = (gpuLoad.HasValue && gpuLoad > 0)
-            || !string.IsNullOrEmpty(staticInfo.GpuName);
+            || (staticInfo is not null && !string.IsNullOrEmpty(staticInfo.GpuName));
 
         // Map WMI drive data to StorageHealth records
         var drives = MapDrives(wmiDynamic?.Drives);
@@ -326,11 +333,11 @@ internal sealed class SystemMonitor : IDisposable
         if (_disposed) return;
         _disposed = true;
 
-        _perf.Updated -= OnSubServiceUpdated;
-        _wmi.Updated -= OnSubServiceUpdated;
+        if (_perf is not null) _perf.Updated -= OnSubServiceUpdated;
+        if (_wmi is not null) _wmi.Updated -= OnSubServiceUpdated;
 
-        _perf.Dispose();
-        _wmi.Dispose();
+        _perf?.Dispose();
+        _wmi?.Dispose();
     }
 }
 

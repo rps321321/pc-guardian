@@ -157,13 +157,13 @@ namespace PCGuardian
 
                 // Timestamp
                 string timestamp = evt.Time.ToString("HH:mm");
-                gpu.DrawTextSimple(timestamp, "Segoe UI", 8f, ColorTimestamp, bounds.X + TimestampX, rowY + 5);
+                gpu.DrawTextSimple(timestamp, "Segoe UI", 12f, ColorTimestamp, bounds.X + TimestampX, rowY + 5);
 
                 // Message — clip to available width
                 int messageAreaWidth = bounds.Width - MessageX - (events.Count > MaxVisibleRows ? ScrollbarWidth + 2 : 0);
                 var clipRect = new RectangleF(bounds.X + MessageX, rowY, messageAreaWidth, RowHeight);
                 gpu.PushClip(clipRect);
-                gpu.DrawTextSimple(evt.Message, "Segoe UI", 8.5f, ColorMessage, bounds.X + MessageX, rowY + 5);
+                gpu.DrawTextSimple(evt.Message, "Segoe UI", 12f, ColorMessage, bounds.X + MessageX, rowY + 5);
                 gpu.PopClip();
             }
 

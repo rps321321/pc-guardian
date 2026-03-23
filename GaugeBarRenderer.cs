@@ -108,12 +108,12 @@ internal static class GaugeBarRenderer
         bool isDisk = false)
     {
         // --- Measure value text to allocate enough space ---
-        var valueSize = gpu.MeasureText(valueText, "Segoe UI Semibold", 9f, FontWeight.SemiBold);
+        var valueSize = gpu.MeasureText(valueText, "Segoe UI Semibold", 13f, FontWeight.SemiBold);
         int valueWidth = Math.Max(DefaultValueWidth, (int)Math.Ceiling(valueSize.Width) + 4);
 
         // --- Label (left) ---
-        float labelY = bounds.Y + (bounds.Height - gpu.MeasureText(label, "Segoe UI", 9f).Height) / 2f;
-        gpu.DrawTextSimple(label, "Segoe UI", 9f, Theme.TextSecondary, bounds.X, labelY);
+        float labelY = bounds.Y + (bounds.Height - gpu.MeasureText(label, "Segoe UI", 13f).Height) / 2f;
+        gpu.DrawTextSimple(label, "Segoe UI", 13f, Theme.TextSecondary, bounds.X, labelY);
 
         // --- Track (center) ---
         int trackWidth = bounds.Width - LabelWidth - valueWidth;
@@ -156,7 +156,7 @@ internal static class GaugeBarRenderer
         // --- Value text (right) ---
         float valTextY = bounds.Y + (bounds.Height - valueSize.Height) / 2f;
         float valTextX = bounds.X + LabelWidth + trackWidth + valueWidth - valueSize.Width;
-        gpu.DrawTextSimple(valueText, "Segoe UI Semibold", 9f, Theme.TextPrimary, valTextX, valTextY, FontWeight.SemiBold);
+        gpu.DrawTextSimple(valueText, "Segoe UI Semibold", 13f, Theme.TextPrimary, valTextX, valTextY, FontWeight.SemiBold);
     }
 
     private static Color GetBarColor(float value)

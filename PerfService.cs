@@ -303,12 +303,15 @@ internal sealed class PerfService : IDisposable
         }
         catch (InvalidOperationException)
         {
+            // Bug 4 fix: increment failure count so dead-counter logic kicks in
+            // instead of re-enumerating forever.
             lock (_lock)
             {
                 if (_gpuCounters is not null)
                     foreach (var c in _gpuCounters) try { c.Dispose(); } catch { }
                 _gpuCounters = null;
             }
+            if (++_gpuFailures >= MaxFailures) _gpuDead = true;
             return 0f;
         }
         catch

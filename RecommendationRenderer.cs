@@ -198,7 +198,7 @@ internal static class RecommendationRenderer
         // Icon
         string icon = rec.Impact > 7 ? "\u26A0" : rec.Impact >= 4 ? "\u26A0" : "\u2139";
         int iconY = card.Y + (card.Height - 16) / 2;
-        gpu.DrawTextSimple(icon, "Segoe UI", 10f, accentColor, card.X + IconX, iconY);
+        gpu.DrawTextSimple(icon, "Segoe UI", 14f, accentColor, card.X + IconX, iconY);
 
         // Description text — clip to available width
         int descLeft = card.X + DescX;
@@ -207,7 +207,7 @@ internal static class RecommendationRenderer
         int descY = card.Y + (card.Height - 14) / 2;
         var clipRect = new RectangleF(descLeft, card.Y, descWidth, card.Height);
         gpu.PushClip(clipRect);
-        gpu.DrawTextSimple(rec.Title, "Segoe UI", 9f, Theme.TextPrimary, descLeft, descY);
+        gpu.DrawTextSimple(rec.Title, "Segoe UI", 13f, Theme.TextPrimary, descLeft, descY);
         gpu.PopClip();
 
         // Fix button
@@ -224,10 +224,10 @@ internal static class RecommendationRenderer
             FixRadius,
             Color.FromArgb(alpha, Theme.Accent));
 
-        var textSize = gpu.MeasureText("Fix", "Segoe UI Semibold", 8f, Vortice.DirectWrite.FontWeight.SemiBold);
+        var textSize = gpu.MeasureText("Fix", "Segoe UI Semibold", 12f, Vortice.DirectWrite.FontWeight.SemiBold);
         float tx = fixRect.X + (fixRect.Width - textSize.Width) / 2f;
         float ty = fixRect.Y + (fixRect.Height - textSize.Height) / 2f;
-        gpu.DrawTextSimple("Fix", "Segoe UI Semibold", 8f, Theme.Accent, tx, ty, Vortice.DirectWrite.FontWeight.SemiBold);
+        gpu.DrawTextSimple("Fix", "Segoe UI Semibold", 12f, Theme.Accent, tx, ty, Vortice.DirectWrite.FontWeight.SemiBold);
     }
 
     private static void DrawEmptyStateD2D(GpuRenderer gpu, Rectangle bounds)
@@ -239,12 +239,12 @@ internal static class RecommendationRenderer
 
         // Checkmark icon
         int iconY = bounds.Y + (CardHeight - 16) / 2;
-        gpu.DrawTextSimple("\u2713", "Segoe UI", 10f, Emerald, bounds.X + IconX, iconY);
+        gpu.DrawTextSimple("\u2713", "Segoe UI", 14f, Emerald, bounds.X + IconX, iconY);
 
         // Message
         gpu.DrawTextSimple(
             "No issues \u2014 your PC is well configured",
-            "Segoe UI", 9f, Emerald,
+            "Segoe UI", 13f, Emerald,
             bounds.X + DescX, bounds.Y + (CardHeight - 14) / 2);
     }
 

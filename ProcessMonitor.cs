@@ -103,7 +103,7 @@ internal sealed class ProcessMonitor : IDisposable
                 if (!previous.ContainsKey(pid))
                 {
                     _db.UpsertProgram(info.Name, info.Path, info.Company, info.Category);
-                    _db.StartSession(info.Name, pid, now, info.MemoryMB);
+                    _db.StartSession(info.Name, info.Path, pid, now, info.MemoryMB);
                 }
             }
 
@@ -185,6 +185,8 @@ internal sealed class ProcessMonitor : IDisposable
     public void Dispose()
     {
         _timer.Change(Timeout.Infinite, Timeout.Infinite);
-        _timer.Dispose();
+        using var waitHandle = new ManualResetEvent(false);
+        if (_timer.Dispose(waitHandle))
+            waitHandle.WaitOne(TimeSpan.FromSeconds(10));
     }
 }
