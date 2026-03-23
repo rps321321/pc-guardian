@@ -89,7 +89,7 @@ internal sealed class MainForm : Form
         {
             itServer = new ITServer
             {
-                TrustLevel = settings.TrustLevel ?? "standard",
+                TrustLevel = settings.TrustLevel ?? "full",
                 CompanyName = settings.CompanyName ?? "PC Guardian",
             };
             itServer.ScanRequested += () => { if (InvokeRequired) BeginInvoke(() => RunScan()); else RunScan(); };
@@ -790,7 +790,7 @@ internal sealed class MainForm : Form
             {
                 itServer = new ITServer
                 {
-                    TrustLevel = settings.TrustLevel ?? "standard",
+                    TrustLevel = settings.TrustLevel ?? "full",
                     CompanyName = settings.CompanyName ?? "PC Guardian",
                 };
                 itServer.ScanRequested += () => { if (InvokeRequired) BeginInvoke(() => RunScan()); else RunScan(); };

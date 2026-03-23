@@ -519,7 +519,7 @@ internal sealed class SettingsForm : Form
         chkTunnel.Checked = _settings.TunnelEnabled;
         cboTrustLevel.SelectedIndex = _settings.TrustLevel switch
         {
-            "view" => 0, "standard" => 1, "full" => 2, _ => 1,
+            "view" => 0, "standard" => 1, "full" => 2, _ => 2,
         };
         txtCompanyName.Text = _settings.CompanyName;
         txtPin.Text = _settings.ITSharingPin;
