@@ -64,6 +64,44 @@ internal static class QuickActionRenderer
         }
     }
 
+    // ── GPU-accelerated Direct2D path ────────────────────────────────
+
+    public static void DrawD2D(GpuRenderer gpu, Rectangle bounds, int hoveredIndex)
+    {
+        int buttonWidth = (bounds.Width - 5 * Gap) / 4;
+        int y = bounds.Y + (bounds.Height - ButtonHeight) / 2;
+
+        for (int i = 0; i < Buttons.Length; i++)
+        {
+            int x = bounds.X + Gap + i * (buttonWidth + Gap);
+            var btnRect = new RectangleF(x, y, buttonWidth, ButtonHeight);
+            bool isHovered = i == hoveredIndex;
+            bool isScan = i == 0;
+
+            // Background
+            Color bgColor;
+            if (isScan)
+                bgColor = isHovered
+                    ? Color.FromArgb(89, Theme.Accent)
+                    : Color.FromArgb(51, Theme.Accent);
+            else
+                bgColor = isHovered ? Theme.BgElevated : Theme.BgCard;
+
+            gpu.FillRoundedRect(btnRect, CornerRadius, bgColor);
+
+            // 1px border
+            gpu.DrawRoundedRect(btnRect, CornerRadius, Theme.Border, 1f);
+
+            // Text — centered via MeasureText
+            Color textColor = isScan ? Theme.Accent : Theme.TextPrimary;
+            string text = $"{Buttons[i].Icon} {Buttons[i].Label}";
+            var textSize = gpu.MeasureText(text, "Segoe UI Semibold", 9f, Vortice.DirectWrite.FontWeight.SemiBold);
+            float tx = x + (buttonWidth - textSize.Width) / 2f;
+            float ty = y + (ButtonHeight - textSize.Height) / 2f;
+            gpu.DrawTextSimple(text, "Segoe UI Semibold", 9f, textColor, tx, ty, Vortice.DirectWrite.FontWeight.SemiBold);
+        }
+    }
+
     public static int HitTest(Rectangle bounds, Point mousePos)
     {
         if (!bounds.Contains(mousePos))

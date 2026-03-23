@@ -1,5 +1,6 @@
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using DW = Vortice.DirectWrite;
 
 namespace PCGuardian
 {
@@ -118,6 +119,73 @@ namespace PCGuardian
                     using var borderPath = RoundedRect(
                         Rectangle.Inflate(tileRect, -1, -1), CornerRadius);
                     g.DrawPath(borderPen, borderPath);
+                }
+            }
+        }
+
+        public static void DrawD2D(
+            GpuRenderer gpu,
+            Rectangle bounds,
+            IReadOnlyList<CategoryTileData> tiles,
+            int hoveredTile,
+            float pulseAlpha)
+        {
+            int count = Math.Min(tiles.Count, Cols * Rows);
+
+            for (int i = 0; i < count; i++)
+            {
+                int col = i % Cols;
+                int row = i / Cols;
+
+                float x = bounds.X + col * (TileW + GapX);
+                float y = bounds.Y + row * (TileH + GapY);
+
+                var tile = tiles[i];
+                bool isHovered = i == hoveredTile;
+                Color statusColor = Theme.StatusColor(tile.Status);
+
+                // 1. Background — rounded rect with status-tinted fill
+                int bgAlpha = ComputeBgAlpha(tile.Status, isHovered, pulseAlpha);
+                Color bgColor = Color.FromArgb(bgAlpha, statusColor);
+                var tileRect = new RectangleF(x, y, TileW, TileH);
+                gpu.FillRoundedRect(tileRect, 6f, bgColor);
+
+                // 2. Left accent bar
+                gpu.FillRect(new RectangleF(x + 2, y + AccentBarPadY, AccentBarWidth, TileH - AccentBarPadY * 2), statusColor);
+
+                // 3. Status icon
+                string icon = tile.Status switch
+                {
+                    Status.Safe => "\u2713",
+                    Status.Warning => "!",
+                    Status.Danger => "\u2715",
+                    _ => "",
+                };
+
+                string abbr = Abbreviations.GetValueOrDefault(tile.Id,
+                    tile.Id[..Math.Min(4, tile.Id.Length)].ToUpper())!;
+
+                Color textColor = tile.Status == Status.Danger ? Color.White : statusColor;
+
+                // Measure to center the combined text
+                string combined = $"{icon} {abbr}";
+                var textSize = gpu.MeasureText(combined, "Segoe UI Semibold", 7.5f, DW.FontWeight.SemiBold);
+                float textX = x + (TileW - textSize.Width) / 2f;
+                float textY = y + (TileH - textSize.Height) / 2f;
+
+                // Draw icon
+                gpu.DrawTextSimple(icon, "Segoe UI", 9f, textColor, textX, textY);
+
+                // Draw abbreviation label after icon
+                var iconSize = gpu.MeasureText(icon + " ", "Segoe UI", 9f);
+                gpu.DrawTextSimple(abbr, "Segoe UI Semibold", 7.5f, textColor, textX + iconSize.Width, textY, DW.FontWeight.SemiBold);
+
+                // 4. Hover border
+                if (isHovered)
+                {
+                    Color borderColor = Color.FromArgb(128, statusColor);
+                    var borderRect = new RectangleF(x + 1, y + 1, TileW - 2, TileH - 2);
+                    gpu.DrawRoundedRect(borderRect, 6f, borderColor, 1f);
                 }
             }
         }

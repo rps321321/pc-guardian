@@ -157,6 +157,97 @@ internal static class RecommendationRenderer
             TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
     }
 
+    // ── GPU-accelerated Direct2D path ────────────────────────────────
+
+    public static void DrawD2D(
+        GpuRenderer gpu,
+        Rectangle bounds,
+        IReadOnlyList<Recommendation> recs,
+        int hoveredCard,
+        int hoveredFix)
+    {
+        if (recs.Count == 0)
+        {
+            DrawEmptyStateD2D(gpu, bounds);
+            return;
+        }
+
+        int count = Math.Min(recs.Count, MaxCards);
+        for (int i = 0; i < count; i++)
+        {
+            var cardRect = GetCardRect(bounds, i);
+            DrawCardD2D(gpu, cardRect, recs[i], isHovered: i == hoveredCard, isFixHovered: i == hoveredFix);
+        }
+    }
+
+    private static void DrawCardD2D(GpuRenderer gpu, Rectangle card, Recommendation rec, bool isHovered, bool isFixHovered)
+    {
+        var accentColor = GetAccentColor(rec.Impact);
+
+        // Card background
+        gpu.FillRoundedRect(
+            new RectangleF(card.X, card.Y, card.Width, card.Height),
+            CardRadius,
+            isHovered ? Theme.BgCardHover : Theme.BgCard);
+
+        // Left accent bar
+        gpu.FillRect(
+            new RectangleF(card.X, card.Y + 2, AccentBarWidth, card.Height - 4),
+            accentColor);
+
+        // Icon
+        string icon = rec.Impact > 7 ? "\u26A0" : rec.Impact >= 4 ? "\u26A0" : "\u2139";
+        int iconY = card.Y + (card.Height - 16) / 2;
+        gpu.DrawTextSimple(icon, "Segoe UI", 10f, accentColor, card.X + IconX, iconY);
+
+        // Description text — clip to available width
+        int descLeft = card.X + DescX;
+        int rightEdge = rec.HasFix ? card.Right - FixMargin - FixWidth - 8 : card.Right - FixMargin;
+        int descWidth = rightEdge - descLeft;
+        int descY = card.Y + (card.Height - 14) / 2;
+        var clipRect = new RectangleF(descLeft, card.Y, descWidth, card.Height);
+        gpu.PushClip(clipRect);
+        gpu.DrawTextSimple(rec.Title, "Segoe UI", 9f, Theme.TextPrimary, descLeft, descY);
+        gpu.PopClip();
+
+        // Fix button
+        if (rec.HasFix)
+            DrawFixButtonD2D(gpu, card, isFixHovered);
+    }
+
+    private static void DrawFixButtonD2D(GpuRenderer gpu, Rectangle card, bool isHovered)
+    {
+        var fixRect = GetFixButtonRect(card);
+        int alpha = isHovered ? 89 : 51;
+        gpu.FillRoundedRect(
+            new RectangleF(fixRect.X, fixRect.Y, fixRect.Width, fixRect.Height),
+            FixRadius,
+            Color.FromArgb(alpha, Theme.Accent));
+
+        var textSize = gpu.MeasureText("Fix", "Segoe UI Semibold", 8f, Vortice.DirectWrite.FontWeight.SemiBold);
+        float tx = fixRect.X + (fixRect.Width - textSize.Width) / 2f;
+        float ty = fixRect.Y + (fixRect.Height - textSize.Height) / 2f;
+        gpu.DrawTextSimple("Fix", "Segoe UI Semibold", 8f, Theme.Accent, tx, ty, Vortice.DirectWrite.FontWeight.SemiBold);
+    }
+
+    private static void DrawEmptyStateD2D(GpuRenderer gpu, Rectangle bounds)
+    {
+        var cardRect = new RectangleF(bounds.X, bounds.Y, bounds.Width, CardHeight);
+
+        // Background
+        gpu.FillRoundedRect(cardRect, CardRadius, Theme.BgCard);
+
+        // Checkmark icon
+        int iconY = bounds.Y + (CardHeight - 16) / 2;
+        gpu.DrawTextSimple("\u2713", "Segoe UI", 10f, Emerald, bounds.X + IconX, iconY);
+
+        // Message
+        gpu.DrawTextSimple(
+            "No issues \u2014 your PC is well configured",
+            "Segoe UI", 9f, Emerald,
+            bounds.X + DescX, bounds.Y + (CardHeight - 14) / 2);
+    }
+
     private static Color GetAccentColor(float impact)
     {
         if (impact > 7) return RedAccent;

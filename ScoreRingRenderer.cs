@@ -1,6 +1,7 @@
 using System;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using DWFontWeight = Vortice.DirectWrite.FontWeight;
 
 namespace PCGuardian
 {
@@ -8,6 +9,64 @@ namespace PCGuardian
     {
         private const int RingWidth = 10;
         private const int GlowWidth = 20;
+
+        // ── GPU-accelerated Direct2D path ────────────────────────────────
+
+        public static void DrawD2D(GpuRenderer gpu, Rectangle bounds, float score, string grade, float animProgress)
+        {
+            var innerBounds = new RectangleF(
+                bounds.X + RingWidth / 2f,
+                bounds.Y + RingWidth / 2f,
+                bounds.Width - RingWidth,
+                bounds.Height - RingWidth);
+
+            float easedProgress = EaseOutCubic(animProgress);
+            float sweepAngle = (score / 100f) * 360f * easedProgress;
+            Color scoreColor = ScoreColor(score);
+
+            // 1. Background track -- full circle
+            gpu.DrawArc(innerBounds, 0, 360, Theme.Border, RingWidth);
+
+            // 2. Glow effect -- drawn before main arc
+            if (sweepAngle > 0.1f)
+                gpu.DrawArc(innerBounds, -90, sweepAngle, Color.FromArgb(38, scoreColor), GlowWidth);
+
+            // 3. Score arc -- sweeps from 12 o'clock
+            if (sweepAngle > 0.1f)
+                gpu.DrawArc(innerBounds, -90, sweepAngle, scoreColor, RingWidth);
+
+            // 4. Center text -- score number + grade letter
+            float cx = bounds.X + bounds.Width / 2f;
+            float cy = bounds.Y + bounds.Height / 2f;
+
+            string scoreText = ((int)(score * easedProgress)).ToString();
+            var numberSize = gpu.MeasureText(scoreText, "Segoe UI", 36f, DWFontWeight.Bold);
+            float numberX = cx - numberSize.Width / 2f;
+            float numberY = cy - numberSize.Height / 2f - 12f;
+            gpu.DrawTextSimple(scoreText, "Segoe UI", 36f, Color.White, numberX, numberY, DWFontWeight.Bold);
+
+            var gradeSize = gpu.MeasureText(grade, "Segoe UI Semibold", 14f, DWFontWeight.Normal);
+            float gradeX = cx - gradeSize.Width / 2f;
+            float gradeY = cy - 12f + numberSize.Height / 2f + 8f;
+            gpu.DrawTextSimple(grade, "Segoe UI Semibold", 14f, scoreColor, gradeX, gradeY, DWFontWeight.Normal);
+
+            // 5. Friendly label below the ring
+            string label = score switch
+            {
+                >= 95 => "Excellent",
+                >= 80 => "Good",
+                >= 60 => "Fair",
+                >= 40 => "Poor",
+                _ => "Critical"
+            };
+
+            var labelSize = gpu.MeasureText(label, "Segoe UI", 9f, DWFontWeight.Normal);
+            float labelX = bounds.X + (bounds.Width - labelSize.Width) / 2f;
+            float labelY = bounds.Bottom + 8f;
+            gpu.DrawTextSimple(label, "Segoe UI", 9f, Theme.TextSecondary, labelX, labelY, DWFontWeight.Normal);
+        }
+
+        // ── GDI+ path (unchanged) ────────────────────────────────────────
 
         public static void Draw(Graphics g, Rectangle bounds, float score, string grade, float animProgress)
         {
