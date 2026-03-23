@@ -34,7 +34,6 @@ internal sealed class MainForm : Form
     ProcessMonitor? monitor;
     ITServer? itServer;
     CloudflareTunnel? tunnel;
-    DeployConfig? deployConfig;
     string? tunnelUrl;
     RealTimeMonitor? realTimeMonitor;
     SystemMonitor? sysMonitor;
@@ -74,10 +73,6 @@ internal sealed class MainForm : Form
         settings = SettingsManager.Load();
         settings.StartWithWindows = SettingsManager.IsStartWithWindowsEnabled();
 
-        // Load deploy config early (before UI setup) — safe defaults if no deploy.json
-        try { deployConfig = DeployConfigLoader.Load(); }
-        catch { deployConfig = null; }
-
         // Apply saved preferences
         Theme.SetDark(settings.DarkMode);
         SoundManager.Enabled = settings.SoundsEnabled;
@@ -88,43 +83,40 @@ internal sealed class MainForm : Form
         if (settings.ProcessMonitorEnabled)
             monitor = new ProcessMonitor(db);
 
-        // Deploy config takes priority for IT server setup (tunnel-enabled deployment)
-        if (deployConfig is { TunnelEnabled: true, Pin.Length: > 0 })
+        // IT sharing — all config comes from settings (no deploy.json)
+        if (settings.ITSharingEnabled)
         {
             itServer = new ITServer
             {
-                TrustLevel = deployConfig.TrustLevel ?? "view",
-                CompanyName = deployConfig.Company ?? "PC Guardian",
+                TrustLevel = settings.TrustLevel ?? "standard",
+                CompanyName = settings.CompanyName ?? "PC Guardian",
             };
             try
             {
-                itServer.Start(settings.ITSharingPort, deployConfig.Pin);
+                var pin = string.IsNullOrWhiteSpace(settings.ITSharingPin) ? null : settings.ITSharingPin;
+                itServer.Start(settings.ITSharingPort, pin);
                 if (lastReport != null) itServer.UpdateReport(lastReport);
 
-                // Start Cloudflare tunnel pointing to the IT server port
-                tunnel = new CloudflareTunnel();
-                tunnel.UrlAssigned += url =>
+                // Start Cloudflare tunnel if enabled
+                if (settings.TunnelEnabled)
                 {
-                    tunnelUrl = url;
-                    try
+                    tunnel = new CloudflareTunnel();
+                    tunnel.UrlAssigned += url =>
                     {
-                        if (InvokeRequired)
-                            BeginInvoke(() => UpdateTrayForTunnel(url));
-                        else
-                            UpdateTrayForTunnel(url);
-                    }
-                    catch { /* Form may be disposed */ }
-                };
-                tunnel.Start(itServer.Port);
+                        tunnelUrl = url;
+                        try
+                        {
+                            if (InvokeRequired)
+                                BeginInvoke(() => UpdateTrayForTunnel(url));
+                            else
+                                UpdateTrayForTunnel(url);
+                        }
+                        catch { /* Form may be disposed */ }
+                    };
+                    tunnel.Start(itServer.Port);
+                }
             }
-            catch { /* Tunnel or server start failed — continue without */ }
-        }
-        else if (settings.ITSharingEnabled)
-        {
-            // Fall back to user-configured IT sharing (no tunnel)
-            itServer = new ITServer();
-            try { itServer.Start(settings.ITSharingPort, string.IsNullOrWhiteSpace(settings.ITSharingPin) ? null : settings.ITSharingPin); }
-            catch { }
+            catch { /* Server or tunnel start failed — continue without */ }
         }
 
         try { sysMonitor = new SystemMonitor(db); } catch { /* Init failed */ }
@@ -152,7 +144,7 @@ internal sealed class MainForm : Form
 
         // Determine whether to start minimized: deploy config can force it,
         // or the caller can request it (e.g., --minimized flag)
-        bool shouldMinimize = startMinimized || (deployConfig != null && !deployConfig.ShowMainWindow);
+        bool shouldMinimize = startMinimized;
         if (shouldMinimize)
         {
             WindowState = FormWindowState.Minimized;

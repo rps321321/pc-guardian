@@ -44,6 +44,11 @@ internal sealed class AppSettings
     public bool ITSharingEnabled { get; set; }
     public int ITSharingPort { get; set; } = 7777;
     public string ITSharingPin { get; set; } = "";
+    public bool TunnelEnabled { get; set; }
+    public string TrustLevel { get; set; } = "standard";
+    public string CompanyName { get; set; } = "PC Guardian";
+    public string? ContactUrl { get; set; }
+    public string? ContactPhone { get; set; }
 
     // Appearance & UX
     public bool DarkMode { get; set; } = true;
