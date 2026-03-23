@@ -773,16 +773,54 @@ internal sealed class MainForm : Form
         {
             if (itServer == null)
             {
-                itServer = new ITServer();
+                itServer = new ITServer
+                {
+                    TrustLevel = settings.TrustLevel ?? "standard",
+                    CompanyName = settings.CompanyName ?? "PC Guardian",
+                };
                 itServer.ScanRequested += () => RunScan();
             }
             else itServer.Stop();
             itServer.Start(settings.ITSharingPort,
                 string.IsNullOrWhiteSpace(settings.ITSharingPin) ? null : settings.ITSharingPin);
             if (lastReport != null) itServer.UpdateReport(lastReport);
+
+            // Tunnel — start if enabled and not already running
+            if (settings.TunnelEnabled && tunnel == null)
+            {
+                tunnel = new CloudflareTunnel();
+                tunnel.UrlAssigned += url =>
+                {
+                    tunnelUrl = url;
+                    try
+                    {
+                        if (InvokeRequired)
+                            BeginInvoke(() => UpdateTrayForTunnel(url));
+                        else
+                            UpdateTrayForTunnel(url);
+                    }
+                    catch { }
+                };
+                tunnel.Start(itServer.Port);
+            }
+            else if (!settings.TunnelEnabled && tunnel != null)
+            {
+                tunnel.Stop();
+                tunnel.Dispose();
+                tunnel = null;
+                tunnelUrl = null;
+            }
         }
         else
         {
+            // Stop tunnel first
+            if (tunnel != null)
+            {
+                tunnel.Stop();
+                tunnel.Dispose();
+                tunnel = null;
+                tunnelUrl = null;
+            }
             itServer?.Dispose();
             itServer = null;
         }
