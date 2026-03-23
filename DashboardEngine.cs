@@ -91,8 +91,14 @@ internal sealed class DashboardEngine : IDisposable
     /// <summary>Compute and return the current dashboard state.</summary>
     public DashboardState GetState()
     {
+        // Collect data outside lock (these acquire their own locks / do WMI calls)
+        var perf = _monitor?.GetLatestPerf();
+        var snapshot = _monitor?.GetSnapshot();
+        var mining = _monitor is not null ? _monitor.CheckForMining() : (false, "");
+        var posture = _monitor?.GetSecurityPosture();
+
         lock (_lock)
-            return BuildState();
+            return BuildState(perf, snapshot, mining, posture);
     }
 
     /// <summary>Ingest a completed scan report and refresh state.</summary>
@@ -140,9 +146,15 @@ internal sealed class DashboardEngine : IDisposable
 
     void NotifyStateChanged()
     {
+        // Collect data outside lock (these acquire their own locks / do WMI calls)
+        var perf = _monitor?.GetLatestPerf();
+        var snapshot = _monitor?.GetSnapshot();
+        var mining = _monitor is not null ? _monitor.CheckForMining() : (false, "");
+        var posture = _monitor?.GetSecurityPosture();
+
         DashboardState state;
         lock (_lock)
-            state = BuildState();
+            state = BuildState(perf, snapshot, mining, posture);
 
         try { StateChanged?.Invoke(state); }
         catch { /* subscriber errors must not crash the engine */ }
@@ -150,10 +162,14 @@ internal sealed class DashboardEngine : IDisposable
 
     // ── Core state builder ──────────────────────────────────────────────
 
-    DashboardState BuildState()
+    DashboardState BuildState(
+        PerfReading? perf = null,
+        HardwareSnapshot? snapshot = null,
+        (bool IsSuspicious, string Reason)? mining = null,
+        SecurityPosture? posture = null)
     {
         // Performance metrics
-        var perf = _monitor?.GetLatestPerf();
+        perf ??= _monitor?.GetLatestPerf();
         float cpuPercent = perf?.CpuPercent ?? 0f;
         float gpuPercent = perf?.GpuPercent ?? 0f;
         uint ramPercent = perf?.RamUsedPercent ?? 0;
@@ -163,7 +179,7 @@ internal sealed class DashboardEngine : IDisposable
 
         // Threat score
         float cts = ComputeCompositeThreatScore();
-        cts = ApplyLiveAdjustments(cts, cpuPercent, gpuPercent);
+        cts = ApplyLiveAdjustments(cts, cpuPercent, gpuPercent, snapshot, mining, posture);
         cts = Math.Clamp(cts, 0f, 100f);
 
         string grade = ScoreToGrade(cts);
@@ -181,7 +197,7 @@ internal sealed class DashboardEngine : IDisposable
         var recentActivity = _activity.ToList().AsReadOnly();
 
         // Recommendations
-        var recommendations = BuildRecommendations();
+        var recommendations = BuildRecommendations(posture);
 
         // System summary
         string summary = BuildSystemSummary();
@@ -236,7 +252,11 @@ internal sealed class DashboardEngine : IDisposable
         return 100f - penalty;
     }
 
-    float ApplyLiveAdjustments(float score, float cpu, float gpu)
+    float ApplyLiveAdjustments(
+        float score, float cpu, float gpu,
+        HardwareSnapshot? snapshot = null,
+        (bool IsSuspicious, string Reason)? mining = null,
+        SecurityPosture? posture = null)
     {
         // CPU sustained >80% for >5 min
         if (cpu > 80f)
@@ -252,10 +272,9 @@ internal sealed class DashboardEngine : IDisposable
         }
 
         // Unknown process with high GPU
-        var snapshot = _monitor?.GetSnapshot();
         if (snapshot is not null && gpu > 70f)
         {
-            var (isSuspicious, _) = _monitor!.CheckForMining();
+            var isSuspicious = mining?.IsSuspicious ?? false;
             if (isSuspicious)
                 score -= 10f;
         }
@@ -276,7 +295,6 @@ internal sealed class DashboardEngine : IDisposable
         }
 
         // Pending Windows updates — check via security posture
-        var posture = _monitor?.GetSecurityPosture();
         if (posture is not null && posture.RebootPending)
             score -= 5f;
 
@@ -414,9 +432,9 @@ internal sealed class DashboardEngine : IDisposable
 
     // ── Recommendations ─────────────────────────────────────────────────
 
-    IReadOnlyList<Recommendation> BuildRecommendations()
+    IReadOnlyList<Recommendation> BuildRecommendations(SecurityPosture? posture = null)
     {
-        var posture = _monitor?.GetSecurityPosture();
+        posture ??= _monitor?.GetSecurityPosture();
         var recs = RecommendationEngine.Generate(_lastReport, posture);
 
         // Apply per-user dismiss counts to adjust priority

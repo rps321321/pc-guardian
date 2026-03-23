@@ -10,6 +10,7 @@ internal sealed class CloudflareTunnel : IDisposable
     private readonly object _lock = new();
     private Process? _process;
     private volatile string? _tunnelUrl;
+    private string? _lastUrl;
     private bool _disposed;
 
     public string? TunnelUrl => _tunnelUrl;
@@ -202,6 +203,9 @@ internal sealed class CloudflareTunnel : IDisposable
 
         var url = match.Groups[1].Value;
         _tunnelUrl = url;
+
+        if (url == _lastUrl) return;
+        _lastUrl = url;
 
         try
         {

@@ -361,7 +361,7 @@ internal sealed class HardwareMonitor : IDisposable
 
     public HardwareSnapshot? GetSnapshot() => _inner.GetSnapshot();
     public (bool IsSuspicious, string Reason) CheckForMining() => _inner.CheckForMining();
-    public SecurityPosture GetSecurityPosture() => _inner.GetSecurityPosture();
-    public SystemStaticInfo GetSystemInfo() => _inner.GetSystemInfo();
+    public SecurityPosture? GetSecurityPosture() => _inner.GetSecurityPosture();
+    public SystemStaticInfo? GetSystemInfo() => _inner.GetSystemInfo();
     public void Dispose() => _inner.Dispose();
 }

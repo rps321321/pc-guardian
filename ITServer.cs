@@ -16,7 +16,7 @@ internal sealed class ITServer : IDisposable
     HttpListener? _listener;
     Thread? _thread;
     volatile bool _running;
-    volatile bool _shellActive;
+    int _shellActiveInt; // 0=false, 1=true; use Interlocked for atomic check-then-set
     volatile Report? _latestReport;
     string? _pin;
     int _port;
@@ -97,7 +97,7 @@ internal sealed class ITServer : IDisposable
     public void Stop()
     {
         _running = false;
-        try { _listener?.Stop(); } catch { }
+        try { _listener?.Close(); } catch { }
         _listener = null;
         _cpuCounter?.Dispose();
         _cpuCounter = null;
@@ -187,8 +187,8 @@ internal sealed class ITServer : IDisposable
             return;
         }
 
-        // Bug 7: Guard against multiple simultaneous shells
-        if (_shellActive)
+        // Bug 7: Guard against multiple simultaneous shells (atomic check-then-set)
+        if (Interlocked.CompareExchange(ref _shellActiveInt, 1, 0) != 0)
         {
             var wsReject = await ctx.AcceptWebSocketAsync(null);
             await wsReject.WebSocket.CloseAsync(
@@ -197,7 +197,6 @@ internal sealed class ITServer : IDisposable
             wsReject.WebSocket.Dispose();
             return;
         }
-        _shellActive = true;
 
         System.Net.WebSockets.WebSocket? ws = null;
         Process? shell = null;
@@ -287,7 +286,7 @@ internal sealed class ITServer : IDisposable
         }
         finally
         {
-            _shellActive = false;
+            Interlocked.Exchange(ref _shellActiveInt, 0);
             IsITConnected = false;
             ITConnectionChanged?.Invoke(false);
 
@@ -584,9 +583,10 @@ internal sealed class ITServer : IDisposable
             };
             using var proc = Process.Start(psi);
             var stderrTask = proc?.StandardError.ReadToEndAsync();
-            var output = proc?.StandardOutput.ReadToEnd() ?? "";
-            var error = stderrTask?.Result ?? "";
+            var stdoutTask = proc?.StandardOutput.ReadToEndAsync();
             proc?.WaitForExit(5000);
+            var output = stdoutTask?.Result ?? "";
+            var error = stderrTask?.Result ?? "";
             return new { ok = true, message = string.IsNullOrWhiteSpace(output) ? "Done." : output.Trim() };
         }
         catch (Exception ex)

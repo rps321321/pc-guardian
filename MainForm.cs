@@ -92,7 +92,7 @@ internal sealed class MainForm : Form
                 TrustLevel = settings.TrustLevel ?? "standard",
                 CompanyName = settings.CompanyName ?? "PC Guardian",
             };
-            itServer.ScanRequested += () => RunScan();
+            itServer.ScanRequested += () => { if (InvokeRequired) BeginInvoke(() => RunScan()); else RunScan(); };
             try
             {
                 var pin = string.IsNullOrWhiteSpace(settings.ITSharingPin) ? null : settings.ITSharingPin;
@@ -130,7 +130,7 @@ internal sealed class MainForm : Form
         realTimeMonitor.OnAlert += alert =>
         {
             if (InvokeRequired)
-                BeginInvoke(() => HandleAlert(alert));
+                BeginInvoke(() => { if (!IsDisposed) HandleAlert(alert); });
             else
                 HandleAlert(alert);
         };
@@ -793,7 +793,7 @@ internal sealed class MainForm : Form
                     TrustLevel = settings.TrustLevel ?? "standard",
                     CompanyName = settings.CompanyName ?? "PC Guardian",
                 };
-                itServer.ScanRequested += () => RunScan();
+                itServer.ScanRequested += () => { if (InvokeRequired) BeginInvoke(() => RunScan()); else RunScan(); };
             }
             else itServer.Stop();
             itServer.Start(settings.ITSharingPort,
@@ -914,6 +914,7 @@ internal sealed class MainForm : Form
         realTimeMonitor?.Stop();
         tray.Visible = false;
         tray.Dispose();
+        tray = null!;
         scanTimer.Stop();
         stepTimer.Stop();
         base.OnFormClosing(e);
