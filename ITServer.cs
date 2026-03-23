@@ -77,6 +77,9 @@ internal sealed class ITServer : IDisposable
 
         _running = true;
 
+        // Auto-open firewall port so IT can connect without manual setup
+        OpenFirewallPort(port);
+
         // Initialize PerformanceCounters once and prime them
         try
         {
@@ -100,6 +103,36 @@ internal sealed class ITServer : IDisposable
         _cpuCounter = null;
         _memCounter?.Dispose();
         _memCounter = null;
+    }
+
+    static void OpenFirewallPort(int port)
+    {
+        try
+        {
+            var ruleName = $"PCGuardian_IT_{port}";
+            // Check if rule already exists
+            var checkPsi = new ProcessStartInfo("netsh",
+                $"advfirewall firewall show rule name=\"{ruleName}\"")
+            {
+                CreateNoWindow = true, UseShellExecute = false,
+                RedirectStandardOutput = true, RedirectStandardError = true,
+            };
+            using var check = Process.Start(checkPsi);
+            var output = check?.StandardOutput.ReadToEnd() ?? "";
+            check?.WaitForExit(5000);
+            if (output.Contains(ruleName)) return; // Already exists
+
+            // Create inbound rule
+            var psi = new ProcessStartInfo("netsh",
+                $"advfirewall firewall add rule name=\"{ruleName}\" dir=in action=allow protocol=tcp localport={port}")
+            {
+                CreateNoWindow = true, UseShellExecute = false,
+                RedirectStandardOutput = true, RedirectStandardError = true,
+            };
+            using var proc = Process.Start(psi);
+            proc?.WaitForExit(5000);
+        }
+        catch { /* Not admin or netsh unavailable — server still works on localhost */ }
     }
 
     public void UpdateReport(Report report)
