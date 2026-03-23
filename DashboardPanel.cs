@@ -50,6 +50,7 @@ internal sealed class DashboardPanel : UserControl
     public event Action? NetworkRequested;
     public event Action? SettingsRequested;
     public event Action<string>? FixRequested; // passes recommendation Id
+    public event Action? ThemeToggled;
 
     public DashboardPanel(DashboardEngine engine)
     {
@@ -224,6 +225,7 @@ internal sealed class DashboardPanel : UserControl
             Theme.SetDark(!Theme.IsDark);
             BackColor = Theme.BgPrimary;
             Invalidate();
+            ThemeToggled?.Invoke();
         }));
 
         // Score ring (Y=60..220) — 160px diameter, centered in left half
@@ -425,6 +427,7 @@ internal sealed class DashboardPanel : UserControl
             Theme.SetDark(!Theme.IsDark);
             BackColor = Theme.BgPrimary;
             Invalidate();
+            ThemeToggled?.Invoke();
         }));
     }
 

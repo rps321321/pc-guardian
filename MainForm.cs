@@ -80,8 +80,9 @@ internal sealed class MainForm : Form
         // Initialize database, process monitor, IT server, real-time monitor
         db = new Database();
         db.Initialize();
+        db.PurgeOldData(settings.DataRetentionDays);
         if (settings.ProcessMonitorEnabled)
-            monitor = new ProcessMonitor(db);
+            monitor = new ProcessMonitor(db, settings.ProcessSnapshotIntervalSec * 1000);
 
         // IT sharing — all config comes from settings (no deploy.json)
         if (settings.ITSharingEnabled)
@@ -91,6 +92,7 @@ internal sealed class MainForm : Form
                 TrustLevel = settings.TrustLevel ?? "standard",
                 CompanyName = settings.CompanyName ?? "PC Guardian",
             };
+            itServer.ScanRequested += () => RunScan();
             try
             {
                 var pin = string.IsNullOrWhiteSpace(settings.ITSharingPin) ? null : settings.ITSharingPin;
@@ -179,6 +181,11 @@ internal sealed class MainForm : Form
         dashPanel.NetworkRequested += () => ShowNetworkForm();
         dashPanel.SettingsRequested += () => OpenSettings();
         dashPanel.FixRequested += ExecuteRecommendationFix;
+        dashPanel.ThemeToggled += () =>
+        {
+            settings.DarkMode = Theme.IsDark;
+            SettingsManager.Save(settings);
+        };
         viewIdle.Controls.Add(dashPanel);
 
         // --- Scanning view ---
@@ -352,7 +359,7 @@ internal sealed class MainForm : Form
             lblLastScan.Text = $"Last: {report.Timestamp:h:mm tt}";
 
             // Tray notification if issues found and minimized
-            if (WindowState == FormWindowState.Minimized && report.Overall != Status.Safe)
+            if (settings.ShowNotifications && WindowState == FormWindowState.Minimized && report.Overall != Status.Safe)
             {
                 tray.BalloonTipTitle = "PC Guardian";
                 tray.BalloonTipText = report.Overall == Status.Danger
@@ -758,10 +765,18 @@ internal sealed class MainForm : Form
     void ApplySettings()
     {
         UpdateTimerInterval();
+        SoundManager.Enabled = settings.SoundsEnabled;
+        db.PurgeOldData(settings.DataRetentionDays);
 
         // Process monitor
         if (settings.ProcessMonitorEnabled && monitor == null)
-            monitor = new ProcessMonitor(db);
+            monitor = new ProcessMonitor(db, settings.ProcessSnapshotIntervalSec * 1000);
+        else if (settings.ProcessMonitorEnabled && monitor != null)
+        {
+            // Interval may have changed — recreate
+            monitor.Dispose();
+            monitor = new ProcessMonitor(db, settings.ProcessSnapshotIntervalSec * 1000);
+        }
         else if (!settings.ProcessMonitorEnabled && monitor != null)
         {
             monitor.Dispose();
@@ -891,8 +906,9 @@ internal sealed class MainForm : Form
             WindowState = FormWindowState.Minimized;
             ShowInTaskbar = false;
             Visible = false;
-            tray.ShowBalloonTip(2000, "PC Guardian",
-                "Running in the background. Right-click the tray icon for options.", ToolTipIcon.Info);
+            if (settings.ShowNotifications)
+                tray.ShowBalloonTip(2000, "PC Guardian",
+                    "Running in the background. Right-click the tray icon for options.", ToolTipIcon.Info);
             return;
         }
         realTimeMonitor?.Stop();
@@ -1061,10 +1077,13 @@ internal sealed class MainForm : Form
         if (IsDisposed) return;
         if (tray == null) return;
         SoundManager.Alert();
-        tray.BalloonTipTitle = $"PC Guardian \u2014 {alert.Title}";
-        tray.BalloonTipText = alert.Detail;
-        tray.BalloonTipIcon = alert.Severity == AlertSeverity.Danger ? ToolTipIcon.Error : ToolTipIcon.Warning;
-        tray.ShowBalloonTip(5000);
+        if (settings.ShowNotifications)
+        {
+            tray.BalloonTipTitle = $"PC Guardian \u2014 {alert.Title}";
+            tray.BalloonTipText = alert.Detail;
+            tray.BalloonTipIcon = alert.Severity == AlertSeverity.Danger ? ToolTipIcon.Error : ToolTipIcon.Warning;
+            tray.ShowBalloonTip(5000);
+        }
         dashEngine?.AddActivity(alert.Detail, alert.Severity == AlertSeverity.Danger ? EventSeverity.Danger : EventSeverity.Warning);
     }
 
@@ -1112,6 +1131,8 @@ internal sealed class MainForm : Form
     {
         if (disposing)
         {
+            tunnel?.Stop();
+            tunnel?.Dispose();
             dashEngine?.Dispose();
             dashPanel?.Dispose();
             sysMonitor?.Dispose();

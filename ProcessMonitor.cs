@@ -16,7 +16,7 @@ internal sealed class ProcessMonitor : IDisposable
     private readonly object _snapshotLock = new();
     private Dictionary<int, ProcessInfo> _lastSnapshot = new();
 
-    public ProcessMonitor(Database db)
+    public ProcessMonitor(Database db, int intervalMs = 30000)
     {
         _db = db;
 
@@ -27,8 +27,9 @@ internal sealed class ProcessMonitor : IDisposable
             _lastSnapshot = initial;
         }
 
-        // Fire every 30 seconds; no initial delay (first real diff after 30s).
-        _timer = new System.Threading.Timer(_ => Tick(), null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
+        // Fire at the configured interval; no initial delay (first real diff after one interval).
+        var interval = TimeSpan.FromMilliseconds(intervalMs);
+        _timer = new System.Threading.Timer(_ => Tick(), null, interval, interval);
     }
 
     // ------------------------------------------------------------------

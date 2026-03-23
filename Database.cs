@@ -586,6 +586,42 @@ internal sealed class Database : IDisposable
 
     // ── Maintenance ─────────────────────────────────────────────────
 
+    /// <summary>Deletes records older than the specified number of days. 0 = keep forever.</summary>
+    public void PurgeOldData(int retentionDays)
+    {
+        if (retentionDays <= 0) return;
+
+        using var db = Open();
+        using var tx = db.BeginTransaction();
+        try
+        {
+            string[] tables =
+            [
+                "sessions",
+                "scan_history",
+                "connections_log",
+                "hardware_metrics",
+                "security_events",
+                "disk_space_log",
+            ];
+            string cutoff = DateTime.UtcNow.AddDays(-retentionDays).ToString("yyyy-MM-dd HH:mm:ss");
+            foreach (var table in tables)
+            {
+                using var cmd = db.CreateCommand();
+                cmd.Transaction = tx;
+                cmd.CommandText = $"DELETE FROM {table} WHERE timestamp < @cutoff;";
+                cmd.Parameters.AddWithValue("@cutoff", cutoff);
+                cmd.ExecuteNonQuery();
+            }
+            tx.Commit();
+        }
+        catch
+        {
+            tx.Rollback();
+            throw;
+        }
+    }
+
     /// <summary>User-triggered only. Deletes all logged data and reclaims space.</summary>
     public void PurgeAllData()
     {

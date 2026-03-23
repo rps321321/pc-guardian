@@ -18,11 +18,16 @@ internal sealed class SettingsForm : Form
     ComboBox cboRetention = null!;
     Label lblDbSize = null!;
 
+    // Behavior (extra)
+    CheckBox chkSounds = null!;
+
     // IT Sharing
     CheckBox chkITSharing = null!;
     CheckBox chkTunnel = null!;
     ComboBox cboTrustLevel = null!;
+    TextBox txtCompanyName = null!;
     TextBox txtPin = null!;
+    TextBox txtPort = null!;
     Label lblShareUrl = null!;
     string? _tunnelUrl;
     string? _tunnelStatus;
@@ -94,6 +99,9 @@ internal sealed class SettingsForm : Form
         chkNotifications = AddCheckbox(scroll, "Show tray notifications when issues found", left, ref y,
             "You'll get a little pop-up near your clock if\nsomething looks off. Handy so you don't miss anything.");
 
+        chkSounds = AddCheckbox(scroll, "Play sounds for scan results and alerts", left, ref y,
+            "Plays a short sound when a scan finishes or\nwhen an alert pops up, so you know something happened\neven if you're not looking at the screen.");
+
         y = AddSpacer(scroll, left, y);
 
         // ── Process Monitor ───────────────────────────
@@ -151,6 +159,34 @@ internal sealed class SettingsForm : Form
         scroll.Controls.Add(cboTrustLevel);
         y += 36;
 
+        // Company name
+        var lblCompany = new Label
+        {
+            Text = "Company name",
+            Font = Theme.CardBody,
+            ForeColor = Theme.TextPrimary,
+            AutoSize = true,
+            Location = new(left, y + 4),
+            Cursor = Cursors.Help,
+        };
+        _tip.SetToolTip(lblCompany, "The name shown in the IT dashboard header.\nDefaults to \"PC Guardian\" if left empty.");
+        scroll.Controls.Add(lblCompany);
+
+        txtCompanyName = new TextBox
+        {
+            Font = Theme.CardBody,
+            BackColor = Theme.BgCard,
+            ForeColor = Theme.TextPrimary,
+            BorderStyle = BorderStyle.FixedSingle,
+            Size = new(140, 26),
+            Location = new(right - 140, y),
+            MaxLength = 50,
+            PlaceholderText = "PC Guardian",
+        };
+        _tip.SetToolTip(txtCompanyName, "Your company or organization name.\nShown in the remote IT dashboard.");
+        scroll.Controls.Add(txtCompanyName);
+        y += 36;
+
         // PIN
         var lblPin = new Label
         {
@@ -177,6 +213,34 @@ internal sealed class SettingsForm : Form
         };
         _tip.SetToolTip(txtPin, "A short code your IT person types in before they\ncan see your results. Up to 6 characters.");
         scroll.Controls.Add(txtPin);
+        y += 36;
+
+        // Port
+        var lblPort = new Label
+        {
+            Text = "Port",
+            Font = Theme.CardBody,
+            ForeColor = Theme.TextPrimary,
+            AutoSize = true,
+            Location = new(left, y + 4),
+            Cursor = Cursors.Help,
+        };
+        _tip.SetToolTip(lblPort, "The network port used for IT sharing.\nDefault is 7777. Only change this if your\nIT person asks you to.");
+        scroll.Controls.Add(lblPort);
+
+        txtPort = new TextBox
+        {
+            Font = Theme.CardBody,
+            BackColor = Theme.BgCard,
+            ForeColor = Theme.TextPrimary,
+            BorderStyle = BorderStyle.FixedSingle,
+            Size = new(70, 26),
+            Location = new(right - 70, y),
+            MaxLength = 5,
+            PlaceholderText = "7777",
+        };
+        _tip.SetToolTip(txtPort, "TCP port number (1\u201365535) for the IT sharing server.\nDefault: 7777.");
+        scroll.Controls.Add(txtPort);
         y += 36;
 
         // Remote access status + URL
@@ -450,13 +514,16 @@ internal sealed class SettingsForm : Form
         {
             7 => 0, 30 => 1, 90 => 2, 365 => 3, _ => 4,
         };
+        chkSounds.Checked = _settings.SoundsEnabled;
         chkITSharing.Checked = _settings.ITSharingEnabled;
         chkTunnel.Checked = _settings.TunnelEnabled;
         cboTrustLevel.SelectedIndex = _settings.TrustLevel switch
         {
             "view" => 0, "standard" => 1, "full" => 2, _ => 1,
         };
+        txtCompanyName.Text = _settings.CompanyName;
         txtPin.Text = _settings.ITSharingPin;
+        txtPort.Text = _settings.ITSharingPort.ToString();
     }
 
     void OnSaveClick(object? sender, EventArgs e)
@@ -478,13 +545,17 @@ internal sealed class SettingsForm : Form
         {
             0 => 7, 1 => 30, 2 => 90, 3 => 365, _ => 0,
         };
+        _settings.SoundsEnabled = chkSounds.Checked;
         _settings.ITSharingEnabled = chkITSharing.Checked;
         _settings.TunnelEnabled = chkTunnel.Checked;
         _settings.TrustLevel = cboTrustLevel.SelectedIndex switch
         {
             0 => "view", 1 => "standard", 2 => "full", _ => "standard",
         };
+        _settings.CompanyName = string.IsNullOrWhiteSpace(txtCompanyName.Text) ? "PC Guardian" : txtCompanyName.Text.Trim();
         _settings.ITSharingPin = txtPin.Text.Trim();
+        if (int.TryParse(txtPort.Text.Trim(), out var port) && port is > 0 and <= 65535)
+            _settings.ITSharingPort = port;
 
         // Use scheduled task (admin auto-start) when running as admin,
         // fall back to registry for standard user
