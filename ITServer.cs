@@ -209,7 +209,7 @@ internal sealed class ITServer : IDisposable
                 StartInfo = new ProcessStartInfo
                 {
                     FileName = "powershell.exe",
-                    Arguments = "-NoLogo -NoProfile -NonInteractive -Command \"[Console]::OutputEncoding = [Text.Encoding]::UTF8\"",
+                    Arguments = "-NoLogo -NoProfile -NoExit -Command -",
                     RedirectStandardInput = true,
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
@@ -222,6 +222,10 @@ internal sealed class ITServer : IDisposable
             };
             shell.Exited += (_, _) => { try { cts.Cancel(); } catch { } };
             shell.Start();
+
+            // Set UTF-8 encoding as first command
+            await shell.StandardInput.WriteLineAsync("[Console]::OutputEncoding = [Text.Encoding]::UTF8");
+            await shell.StandardInput.FlushAsync();
 
             var token = cts.Token;
 
@@ -835,7 +839,7 @@ header .right{display:flex;align-items:center;gap:10px;font-size:13px;color:var(
 <div class=""toast-container"" id=""toasts""></div>
 
 <script>
-let pn='',ws=null,cmdHistory=[],histIdx=-1,metricsData=null;
+let pn='',ws=null,wsConnected=false,cmdHistory=[],histIdx=-1,metricsData=null;
 const $=id=>document.getElementById(id);
 
 function toast(msg,type='success'){
@@ -959,10 +963,11 @@ function da(action,name){
             sb.Append(@"
 function connectWS(){
   var p=location.protocol==='https:'?'wss:':'ws:';
+  if(ws&&ws.readyState<2){try{ws.close()}catch(e){}}
   ws=new WebSocket(p+'//'+location.host+'/shell?pin='+encodeURIComponent(pn));
-  ws.onopen=function(){logEntry('Shell connected','act');$('cd').className='dot on';$('ct').textContent='Connected'};
+  ws.onopen=function(){wsConnected=true;logEntry('Shell connected','act');$('cd').className='dot on';$('ct').textContent='Connected'};
   ws.onmessage=function(e){var o=$('tout');o.textContent+=e.data;o.scrollTop=o.scrollHeight};
-  ws.onclose=function(){logEntry('Shell disconnected','err-log');$('cd').className='dot off';$('ct').textContent='Reconnecting...';setTimeout(connectWS,3000)};
+  ws.onclose=function(){$('cd').className='dot off';if(wsConnected){logEntry('Shell disconnected','err-log');$('ct').textContent='Reconnecting...';wsConnected=false;setTimeout(connectWS,5000)}else{$('ct').textContent='Shell unavailable';logEntry('Could not connect to shell','err-log')}};
   ws.onerror=function(){};
 }
 function sendCmd(){
